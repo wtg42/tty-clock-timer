@@ -1,26 +1,65 @@
 const std = @import("std");
 
+/// CLI 參數解析模組
+/// 提供命令列參數解析功能，支援 --minutes/-m、--seconds/-s、--help/-h 參數
+///
+/// 使用範例：
+/// - --minutes 25  或 -m 25  => 倒數 25 分鐘
+/// - --seconds 90  或 -s 90  => 倒數 90 秒
+/// - --help       或 -h     => 顯示說明訊息
 pub const Config = struct {
+    /// 倒數計時持續時間（秒）
     duration_seconds: u32,
+    /// 重置模式（目前未使用）
     reset_mode: bool,
+    /// 是否顯示說明訊息
     show_help: bool,
 };
 
+/// CLI 參數解析錯誤類型
 pub const ParseError = error{
+    /// 未提供任何參數
     MissingArguments,
+    /// --minutes/-m 缺少數值
     MissingMinutesValue,
+    /// --seconds/-s 缺少數值
     MissingSecondsValue,
+    /// 不支援的參數
     UnknownArgument,
+    /// 無效的數值格式
     InvalidNumber,
 };
 
+/// 從程序實際參數解析 CLI 設定
+///
+/// 使用 `std.process.argsAlloc` 獲取程序參數並傳給 `parseArgsFromSlice` 處理
+///
+/// Parameters:
+///   - allocator: 記憶體分配器，用於分配參數字串
+///
+/// Returns:
+///   - Config: 解析成功的設定物件
+///   - ParseError: 解析失敗的錯誤
 pub fn parseArgs(allocator: std.mem.Allocator) !Config {
     const args = try std.process.argsAlloc(allocator);
     defer std.process.argsFree(allocator, args);
     return parseArgsFromSlice(args[1..]);
 }
 
-/// 核心解析邏輯 (方便寫 test)
+/// 從字串切片解析 CLI 設定（核心解析邏輯）
+///
+/// 此函式設計為可獨立測試，方便使用固定輸入進行單元測試
+/// 支援的參數格式：
+///   - --minutes <num> 或 -m <num>: 設定倒數分鐘數
+///   - --seconds <num> 或 -s <num>: 設定倒數秒數
+///   - --help 或 -h: 顯示說明訊息
+///
+/// Parameters:
+///   - args: 參數字串切片（不含執行檔名稱）
+///
+/// Returns:
+///   - Config: 解析成功的設定物件
+///   - ParseError: 解析失敗的錯誤（缺少參數、無效格式等）
 pub fn parseArgsFromSlice(args: []const []const u8) !Config {
     var config = Config{
         .duration_seconds = 0,
@@ -68,15 +107,21 @@ pub fn parseArgsFromSlice(args: []const []const u8) !Config {
     return ParseError.UnknownArgument;
 }
 
-// 輔助函式
+/// 輔助函式群
+/// 檢查參數字串是否符合 help flag
+/// 支援：--help 和 -h
 fn isHelpArg(arg: []const u8) bool {
     return std.mem.eql(u8, arg, "--help") or std.mem.eql(u8, arg, "-h");
 }
 
+/// 檢查參數字串是否符合 minutes flag
+/// 支援：--minutes 和 -m
 fn isMinutesArg(arg: []const u8) bool {
     return std.mem.eql(u8, arg, "--minutes") or std.mem.eql(u8, arg, "-m");
 }
 
+/// 檢查參數字串是否符合 seconds flag
+/// 支援：--seconds 和 -s
 fn isSecondsArg(arg: []const u8) bool {
     return std.mem.eql(u8, arg, "--seconds") or std.mem.eql(u8, arg, "-s");
 }
