@@ -28,6 +28,10 @@ pub const ParseError = error{
     UnknownArgument,
     /// 無效的數值格式
     InvalidNumber,
+    /// 數值計算溢位（例如 --minutes 的值 * 60 超過 u32 最大值）
+    Overflow,
+    /// 記憶體配置失敗
+    OutOfMemory,
 };
 
 /// 從程序實際參數解析 CLI 設定
@@ -88,7 +92,7 @@ pub fn parseArgsFromSlice(args: []const []const u8) !Config {
             return ParseError.InvalidNumber;
         };
         config.duration_seconds = std.math.mul(u32, minutes, 60) catch {
-            return ParseError.InvalidNumber;
+            return ParseError.Overflow;
         };
         return config;
     }
