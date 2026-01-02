@@ -7,6 +7,7 @@
 /// - 整合核心模組（timer, ui, notify - 開發中）
 const std = @import("std");
 const tty_clock_timer = @import("tty_clock_timer");
+const allocator_ctx = @import("lib/allocator.zig");
 
 /// 程式主入口點
 ///
@@ -20,7 +21,8 @@ const tty_clock_timer = @import("tty_clock_timer");
 ///   - !void: 可能拋出錯誤，由 Zig runtime 處理
 pub fn main() !void {
     // 初始化通用記憶體分配器，用於程式執行期間的記憶體配置
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    var gpa = allocator_ctx.makeAllocator();
+    defer gpa.deinit();
     defer {
         // 在程式結束前檢查記憶體洩漏，如果發現則觸發 panic
         const result = gpa.deinit();
