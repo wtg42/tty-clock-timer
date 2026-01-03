@@ -32,6 +32,14 @@ This is a Zig-based CLI countdown timer with tty-clock visual style for Linux te
 - Tests live inline as `test` blocks, prefer testing public APIs in `src/root.zig`
 - stdout for output, stderr for diagnostics
 
+## Language Reference
+
+- **Zig 主要版本**: master
+- **Official Zig Documentation**: https://ziglang.org/documentation/master/
+- **重要**: 在搜尋跟撰寫時須使用相容 master 版本的函式庫用法
+- When working with Zig standard library APIs or language features, always refer to the master documentation first for the most up-to-date information
+- Use `zig std` command to explore standard library documentation locally
+
 ## Language Preference
 
 回答請使用繁體中文，專業領域英文單字保留原文。

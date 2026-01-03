@@ -2,12 +2,14 @@
 ///
 /// 此檔案為可執行檔的入口點，負責：
 /// - CLI 參數解析委派給 config 模組
-/// - 記憶體管理（使用 GeneralPurposeAllocator）
+/// - 記憶體管理 context
 /// - 錯誤處理與訊息輸出
 /// - 整合核心模組（timer, ui, notify - 開發中）
 const std = @import("std");
-const tty_clock_timer = @import("tty_clock_timer");
+const Io = std.Io;
+// const tty_clock_timer = @import("tty_clock_timer");
 const allocator_ctx = @import("lib/allocator.zig");
+const conf = @import("lib/config.zig");
 
 /// 程式主入口點
 ///
@@ -21,38 +23,60 @@ const allocator_ctx = @import("lib/allocator.zig");
 ///   - !void: 可能拋出錯誤，由 Zig runtime 處理
 pub fn main() !void {
     // 初始化通用記憶體分配器，用於程式執行期間的記憶體配置
-    var gpa = allocator_ctx.makeAllocator();
-    defer gpa.deinit();
+    var a_ctx = allocator_ctx.AllocatorCtx.init();
     defer {
         // 在程式結束前檢查記憶體洩漏，如果發現則觸發 panic
-        const result = gpa.deinit();
+        const result = a_ctx.deinit();
         if (result == .leak) @panic("memory leak detected");
     }
-    const allocator = gpa.allocator();
+    const allocator = a_ctx.allocator();
+
+    // In order to do I/O operations we must construct an `Io` instance.
+    var threaded: std.Io.Threaded = .init(allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    // Stdout is for the actual output of your application, for example if you
+    // are implementing gzip, then only the compressed bytes should be sent to
+    // stdout, not any debugging messages.
+    var stdout_buffer: [1024]u8 = undefined;
+    var stdout_file_writer: Io.File.Writer = .init(.stdout(), io, &stdout_buffer);
+    const stdout_writer = &stdout_file_writer.interface;
 
     // 解析 CLI 參數，使用 catch 處理可能的錯誤
-    const config = tty_clock_timer.config.parseArgs(allocator) catch |err| {
+    const config = conf.parseArgs(allocator) catch |err| {
         switch (err) {
-            tty_clock_timer.config.ParseError.MissingArguments => {
-                std.debug.print("Error: Missing arguments. Usage: tty_clock_timer --minutes <num> | --seconds <num> | --help\n", .{});
+            conf.ParseError.MissingArguments => {
+                try stdout_writer.print(
+                    "Error: Missing arguments." ++
+                        " Usage: tty_clock_timer --minutes <num> | --seconds <num> | --help\n",
+                    .{},
+                );
+                try stdout_writer.flush();
             },
-            tty_clock_timer.config.ParseError.MissingMinutesValue => {
-                std.debug.print("Error: --minutes requires a numeric value\n", .{});
+            conf.ParseError.MissingMinutesValue => {
+                try stdout_writer.print("Error: --minutes requires a numeric value\n", .{});
+                try stdout_writer.flush();
             },
-            tty_clock_timer.config.ParseError.MissingSecondsValue => {
-                std.debug.print("Error: --seconds requires a numeric value\n", .{});
+            conf.ParseError.MissingSecondsValue => {
+                try stdout_writer.print("Error: --seconds requires a numeric value\n", .{});
+                try stdout_writer.flush();
             },
-            tty_clock_timer.config.ParseError.UnknownArgument => {
-                std.debug.print("Error: Unknown argument. Use --help for usage information\n", .{});
+            conf.ParseError.UnknownArgument => {
+                try stdout_writer.print("Error: Unknown argument. Use --help for usage information\n", .{});
+                try stdout_writer.flush();
             },
-            tty_clock_timer.config.ParseError.InvalidNumber => {
-                std.debug.print("Error: Invalid numeric value provided\n", .{});
+            conf.ParseError.InvalidNumber => {
+                try stdout_writer.print("Error: Invalid numeric value provided\n", .{});
+                try stdout_writer.flush();
             },
-            tty_clock_timer.config.ParseError.Overflow => {
-                std.debug.print("Error: Numeric value too large\n", .{});
+            conf.ParseError.Overflow => {
+                try stdout_writer.print("Error: Numeric value too large\n", .{});
+                try stdout_writer.flush();
             },
-            tty_clock_timer.config.ParseError.OutOfMemory => {
-                std.debug.print("Error: Out of memory\n", .{});
+            conf.ParseError.OutOfMemory => {
+                try stdout_writer.print("Error: Out of memory\n", .{});
+                try stdout_writer.flush();
             },
         }
         std.process.exit(1);
@@ -60,16 +84,17 @@ pub fn main() !void {
 
     // 顯示使用說明訊息
     if (config.show_help) {
-        std.debug.print("Usage: tty_clock_timer [OPTIONS]\n", .{});
-        std.debug.print("\n", .{});
-        std.debug.print("Options:\n", .{});
-        std.debug.print("  -m, --minutes <num>    Set countdown minutes\n", .{});
-        std.debug.print("  -s, --seconds <num>    Set countdown seconds\n", .{});
-        std.debug.print("  -h, --help             Show this help message\n", .{});
-        std.debug.print("\n", .{});
-        std.debug.print("Example:\n", .{});
-        std.debug.print("  tty_clock_timer --minutes 25\n", .{});
-        std.debug.print("  tty_clock_timer -s 90\n", .{});
+        try stdout_writer.print("Usage: tty_clock_timer [OPTIONS]\n", .{});
+        try stdout_writer.print("\n", .{});
+        try stdout_writer.print("Options:\n", .{});
+        try stdout_writer.print("  -m, --minutes <num>    Set countdown minutes\n", .{});
+        try stdout_writer.print("  -s, --seconds <num>    Set countdown seconds\n", .{});
+        try stdout_writer.print("  -h, --help             Show this help message\n", .{});
+        try stdout_writer.print("\n", .{});
+        try stdout_writer.print("Example:\n", .{});
+        try stdout_writer.print("  tty_clock_timer --minutes 25\n", .{});
+        try stdout_writer.print("  tty_clock_timer -s 90\n", .{});
+        try stdout_writer.flush();
         return;
     }
 
