@@ -27,14 +27,33 @@
 - CLI 參數錯誤時給出清楚錯誤訊息。
 
 ## 里程碑（MVP）
-1) CLI parsing 與 timer core
-2) TTY UI 與倒數顯示
-3) time up 效果與 notification
-4) 打包與 README 更新
+1) CLI parsing 與 timer core ✅ 已完成 (config.zig 實作完成, timer core 待實作)
+2) TTY UI 與倒數顯示 ❌ 未開始
+3) time up 效果與 notification ❌ 未開始
+4) 打包與 README 更新 ❌ 未開始
 
 ## 風險與假設
 - 假設：目標系統可用 desktop notification（如 `notify-send`）。
 - 風險：不同 terminal 對 UI 效果支援差異。
+
+## 目前進度 (2025-01-05)
+
+### 已完成
+- **CLI 參數解析**: 完整的參數解析邏輯，支援 --minutes/-m, --seconds/-s, --help/-h
+- **錯誤處理**: 全面的錯誤類型定義與處理
+- **測試覆蓋**: config.zig 有完整單元測試
+- **建置系統**: 標準 Zig 建置配置
+- **專案架構**: 清晰的模組分層設計
+
+### 當前狀態
+- 程式可以編譯並正確解析 CLI 參數
+- main.zig 目前只印出配置結果，尚未實作實際計時功能
+- 缺少 timer.zig, ui.zig, notify.zig 核心模組
+
+### 下一階段重點
+1. 實作 timer.zig - 倒數計時邏輯與狀態管理
+2. 實作 ui.zig - TTY 顯示與動畫效果
+3. 整合主程式流程
 
 ## 後續擴充方向
 - 互動式輸入與快捷鍵
