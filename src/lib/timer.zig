@@ -12,3 +12,40 @@
 //! - 非阻塞設計：支援異步檢查與更新
 
 const std = @import("std");
+const timer = std.time.Timer;
+
+/// Timer state enumeration
+/// - idle: Timer is not running
+/// - running: Timer is actively counting down
+/// - paused: Timer is paused
+/// - finished: Timer has reached zero
+pub const TimerState = enum {
+    idle,
+    running,
+    paused,
+    finished,
+};
+
+/// Timer structure representing a countdown timer
+/// Fields:
+/// - internal_timer: std.time.Timer
+/// - remaining_ms: Remaining time in milliseconds
+/// - state: Current timer state
+/// - last_tick_ms: Timestamp of last update in nanoseconds
+pub const CountdownTimer = struct {
+    internal_timer: timer,
+    remaining_ms: u32,
+    state: TimerState,
+
+    pub fn init(duration_ms: u32) !CountdownTimer {
+        return .{
+            .internal_timer = try timer.start(),
+            .remaining_ms = duration_ms,
+            .state = .idle,
+        };
+    }
+};
+
+pub fn update() !void {
+    //
+}
