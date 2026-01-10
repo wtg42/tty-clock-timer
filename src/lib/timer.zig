@@ -39,21 +39,21 @@ pub const TimerState = enum {
 /// Timer structure representing a countdown timer
 /// Fields:
 /// - internal_timer: std.time.Timer
-/// - remaining_ms: Remaining time in milliseconds
+/// - remaining_ns: Remaining time in milliseconds
 /// - state: Current timer state
-/// - reset_ms: The start time
+/// - reset_ns: The start time
 pub const CountdownTimer = struct {
     internal_timer: ?std.time.Timer,
-    remaining_ms: u64,
+    remaining_ns: u64,
     state: TimerState,
-    reset_ms: u64,
+    reset_ns: u64,
 
-    pub fn init(duration_ms: u64) CountdownTimer {
+    pub fn init(duration_ns: u64) CountdownTimer {
         return .{
             .internal_timer = null,
-            .remaining_ms = duration_ms,
+            .remaining_ns = duration_ns,
             .state = .idle,
-            .reset_ms = duration_ms,
+            .reset_ns = duration_ns,
         };
     }
 
@@ -80,6 +80,6 @@ pub const CountdownTimer = struct {
 
         // 讀取目前的經過的時間 並更新剩下的時間
         const duration_time = try self.internal_timer.?.read();
-        self.remaining_ms = std.math.sub(u64, self.remaining_ms, duration_time) catch 0;
+        self.remaining_ns = std.math.sub(u64, self.remaining_ns, duration_time) catch 0;
     }
 };
