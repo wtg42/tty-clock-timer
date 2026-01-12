@@ -21,7 +21,7 @@ const conf = @import("lib/config.zig");
 ///
 /// Returns:
 ///   - !void: 可能拋出錯誤，由 Zig runtime 處理
-pub fn main() !void {
+pub fn main(init: std.process.Init) !void {
     // 初始化通用記憶體分配器，用於程式執行期間的記憶體配置
     var a_ctx = allocator_ctx.AllocatorCtx.init();
     defer {
@@ -32,7 +32,9 @@ pub fn main() !void {
     const allocator = a_ctx.allocator();
 
     // In order to do I/O operations we must construct an `Io` instance.
-    var threaded: std.Io.Threaded = .init(allocator, .{});
+    var threaded: std.Io.Threaded = .init(allocator, .{
+        .environ = std.process.Environ.empty,
+    });
     defer threaded.deinit();
     const io = threaded.io();
 
@@ -44,7 +46,7 @@ pub fn main() !void {
     const stdout_writer = &stdout_file_writer.interface;
 
     // 解析 CLI 參數，使用 catch 處理可能的錯誤
-    const config = conf.parseArgs(allocator) catch |err| {
+    const config = conf.parseArgs(allocator, init.minimal) catch |err| {
         switch (err) {
             conf.ParseError.MissingArguments => {
                 try stdout_writer.print(

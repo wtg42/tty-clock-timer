@@ -44,10 +44,21 @@ pub const ParseError = error{
 /// Returns:
 ///   - Config: 解析成功的設定物件
 ///   - ParseError: 解析失敗的錯誤
-pub fn parseArgs(allocator: std.mem.Allocator) !Config {
+pub fn parseArgs2(allocator: std.mem.Allocator) !Config {
     const args = try std.process.argsAlloc(allocator);
     defer std.process.argsFree(allocator, args);
     return parseArgsFromSlice(args[1..]);
+}
+
+pub fn parseArgs(allocator: std.mem.Allocator, init: std.process.Init.Minimal) !Config {
+    var argsSlice = try std.ArrayList([]const u8).initCapacity(allocator, 0);
+    var args = init.args.iterate();
+    while (args.next()) |arg| {
+        std.log.info("arg: {s}", .{arg});
+        try argsSlice.append(allocator, arg);
+    }
+
+    return parseArgsFromSlice(argsSlice.items);
 }
 
 /// 從字串切片解析 CLI 設定（核心解析邏輯）

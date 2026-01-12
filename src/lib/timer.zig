@@ -47,6 +47,7 @@ pub const CountdownTimer = struct {
     remaining_ns: u64,
     state: TimerState,
     reset_ns: u64,
+    paused_at: u64,
 
     pub fn init(duration_ns: u64) CountdownTimer {
         return .{
@@ -54,9 +55,11 @@ pub const CountdownTimer = struct {
             .remaining_ns = duration_ns,
             .state = .idle,
             .reset_ns = duration_ns,
+            .paused_at = 0,
         };
     }
 
+    /// 用戶開始計時或是重新開始
     pub fn start(self: *CountdownTimer) !void {
         switch (self.state) {
             .idle, .finished => {
@@ -64,12 +67,27 @@ pub const CountdownTimer = struct {
                 self.internal_timer = try .start();
             },
             .running => {
-                self.internal_timer = self.internal_timer.?.reset();
+                self.remaining_ns = self.reset_ns;
+                self.internal_timer.?.reset();
             },
             .paused => {
-                // TODO: 實作暫停時間
-                // TODO: 可能重新一個新 Timer 並把剩餘時間設定進去
+                self.state = .running;
+                self.internal_timer = try .start();
             },
+        }
+    }
+
+    pub fn pause(self: *CountdownTimer) ?void {
+        if (self.state == .running) {
+            self.remaining_ns = self.internal_timer.?.lap();
+            self.state = .paused;
+        }
+    }
+
+    pub fn unpause(self: *CountdownTimer) !void {
+        if (self.state == .paused) {
+            self.state = .running;
+            self.internal_timer = try .start();
         }
     }
 
