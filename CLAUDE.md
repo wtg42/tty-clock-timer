@@ -40,6 +40,12 @@ This is a Zig-based CLI countdown timer with tty-clock visual style for Linux te
 - When working with Zig standard library APIs or language features, always refer to the master documentation first for the most up-to-date information
 - Use `zig std` command to explore standard library documentation locally
 
+## Development Guidelines
+
+- **優先搜尋最新狀況**: 任何需要上網澄清的 Zig 相關問題，優先搜尋 https://ziggit.dev/ 確認最新狀況和社群討論
+- **標準函數庫參考**: 所有標準函數庫用法以 https://ziglang.org/documentation/master/ 為最終權威
+- **版本相容性**: 確保所有程式碼相容 Zig master 版本，避免使用已棄用或變更的 API
+
 ## Language Preference
 
 回答請使用繁體中文，專業領域英文單字保留原文。
