@@ -97,7 +97,7 @@ pub const CountdownTimer = struct {
         }
 
         // 讀取目前的經過的時間 並更新剩下的時間
-        const duration_time = self.internal_timer.?.read();
+        const duration_time = self.internal_timer.?.lap();
         self.remaining_ns = std.math.sub(u64, self.remaining_ns, duration_time) catch 0;
     }
 };
