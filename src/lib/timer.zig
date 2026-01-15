@@ -49,6 +49,9 @@ pub const CountdownTimer = struct {
     reset_ns: u64,
     paused_at: u64,
 
+    /// 初始化倒數計時器
+    /// @param duration_ns 初始持續時間（奈秒）
+    /// @return 新的 CountdownTimer 實例
     pub fn init(duration_ns: u64) CountdownTimer {
         return .{
             .internal_timer = null,
@@ -59,7 +62,11 @@ pub const CountdownTimer = struct {
         };
     }
 
-    /// 用戶開始計時或是重新開始
+    /// 開始或重新開始計時器
+    /// 根據當前狀態執行不同的操作：
+    /// - idle/finished: 開始新的計時
+    /// - running: 重置並重新開始
+    /// - paused: 繼續計時
     pub fn start(self: *CountdownTimer) !void {
         switch (self.state) {
             .idle, .finished => {
@@ -77,6 +84,8 @@ pub const CountdownTimer = struct {
         }
     }
 
+    /// 暫停正在運行的計時器
+    /// 如果計時器正在運行，將其狀態改為暫停並記錄剩餘時間
     pub fn pause(self: *CountdownTimer) ?void {
         if (self.state == .running) {
             self.remaining_ns = self.internal_timer.?.lap();
@@ -84,6 +93,8 @@ pub const CountdownTimer = struct {
         }
     }
 
+    /// 繼續已暫停的計時器
+    /// 如果計時器處於暫停狀態，將其恢復為運行狀態
     pub fn unpause(self: *CountdownTimer) !void {
         if (self.state == .paused) {
             self.state = .running;
@@ -91,6 +102,9 @@ pub const CountdownTimer = struct {
         }
     }
 
+    /// 更新計時器剩餘時間
+    /// 從最後一次更新開始計算經過的時間，並更新剩餘時間
+    /// 如果時間已到，將剩餘時間設為 0
     pub fn update(self: *CountdownTimer) ?void {
         if (self.state != .running) {
             return;
@@ -100,4 +114,36 @@ pub const CountdownTimer = struct {
         const duration_time = self.internal_timer.?.lap();
         self.remaining_ns = std.math.sub(u64, self.remaining_ns, duration_time) catch 0;
     }
+
+    /// Reset timer 功能
+    pub fn reset(self: *CountdownTimer) ?void {
+        self.internal_timer.?.reset();
+
+        return;
+    }
 };
+
+test "timer basic functionality" {
+    var timer_instance = try std.time.Timer.start();
+    std.debug.print("started -> {any}\n privous -> {any}\n", .{ timer_instance.started, timer_instance.previous });
+
+    const allocator = std.testing.allocator;
+    const buf = try allocator.alloc(u8, 1000);
+    allocator.free(buf);
+
+    var threaded: std.Io.Threaded = .init(allocator, .{
+        .environ = std.process.Environ.empty,
+    });
+    const io = threaded.io();
+
+    const io_duration = std.Io.Duration.fromNanoseconds(1_000_000_000);
+
+    try std.Io.sleep(
+        io,
+        io_duration,
+        .real,
+    );
+
+    timer_instance.reset();
+    std.debug.print("started -> {any}\n privous -> {any}\n", .{ timer_instance.started, timer_instance.previous });
+}
