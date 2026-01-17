@@ -1,0 +1,11 @@
+{
+  "permission": {
+    "skill": {
+      "*": "ask",
+      "pr-review": "allow",
+      "internal-*": "deny",
+      "experimental-*": "ask"
+    }
+  },
+  "$schema": "https://opencode.ai/config.json"
+}

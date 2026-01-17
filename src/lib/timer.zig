@@ -128,8 +128,8 @@ test "timer basic functionality" {
     std.debug.print("started -> {any}\n privous -> {any}\n", .{ timer_instance.started, timer_instance.previous });
 
     const allocator = std.testing.allocator;
-    const buf = try allocator.alloc(u8, 1000);
-    allocator.free(buf);
+    // const buf = try allocator.alloc(u8, 1000);
+    // defer allocator.free(buf);
 
     var threaded: std.Io.Threaded = .init(allocator, .{
         .environ = std.process.Environ.empty,
