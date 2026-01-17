@@ -10,9 +10,9 @@
 > **優先權衝突處理**：禁止優先搜尋網路。Zig `master` 版本變動極快，網路資訊（如 StackOverflow/舊文檔）極易過時。
 
 1.  **第一優先 (Local Source)**：必須調用本地 `zig-std-index` Skill。
-    * 模糊搜尋：`bash ./scripts/search.sh <keyword>`
-    * 精確讀取：`bash ./scripts/retrieve.sh <symbol>` (例如：`std.time.Timer`)
-2.  **第二優先 (Online Reference)**：僅當本地 Skill 找不到資訊時，參考 [Zig Master Docs](https://ziglang.org/documentation/master/)。
+    * 模糊搜尋：`bash .opencode/skill/zig-std-index/scripts/search.sh <keyword>`
+    * 精確讀取：`bash .opencode/skill/zig-std-index/scripts/retrieve.sh <symbol>` (例如：`std.time.Timer`)
+2.  **第二優先 (Online Reference)**：僅當本地 Skill 找不到資訊時，參考 [Zig Master Docs](https://ziglang.org/documentation/master/std/)。
 3.  **語言偏好**：回答與解釋請使用 **繁體中文**，技術術語（例如：Allocator, Struct, Defer）保留英文原文。
 
 ---
