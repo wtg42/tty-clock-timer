@@ -57,13 +57,23 @@
 * **單一職責**：每個檔案僅處理一個主結構或一組相關邏輯。
 * **封裝**：預設私有，僅對外暴露必要的 `pub` API，並將 `pub` 函式置於檔案前半部。
 
+### **UI 重構架構**
+根據 UI 重構計畫，採用 **Zig + Embedded Node.js SEA** 架構：
+```
+tty_clock_timer (單一執行檔)
+├── Zig 主程序 (CLI + Timer + IPC)
+└── Embedded Node.js SEA (OpenTUI UI)
+```
+
 ### **目錄導覽**
 * `src/main.zig`: CLI 進入點。
 * `src/root.zig`: 庫 (Library) 公開 API。
 * `src/lib/config.zig`: 參數解析與配置管理。
 * `src/lib/timer.zig`: 核心倒數計時與狀態機邏輯。
 * `src/lib/allocator.zig`: 統一的記憶體管理上下文。
-* *Planned*: `src/lib/ui.zig` (TTY 繪製) 與 `src/lib/notify.zig` (桌面通知)。
+* `src/lib/ipc.zig`: IPC 通訊管理，負責與 Node.js OpenTUI 進程通訊 (重構自 ui.zig)。
+* `src/lib/embedded_ui.zig`: Node.js SEA binary embedding 管理 (新增)。
+* `src/lib/notify.zig`: Linux desktop notification 介面 (待實作)。
 
 ---
 

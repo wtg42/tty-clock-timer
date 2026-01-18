@@ -185,7 +185,7 @@ main.zig (CLI entry point)
   └─> root.zig (library module)
        ├─> config.zig (CLI 解析)
        ├─> timer.zig (計時核心)
-       ├─> ui.zig (TTY 顯示)
+       ├─> ipc.zig (IPC 通訊)
        └─> notify.zig (桌面通知)
 ```
 
@@ -195,7 +195,7 @@ main.zig (CLI entry point)
 // root.zig - 暴露所有公共 API
 pub const config = @import("lib/config.zig");
 pub const timer = @import("lib/timer.zig");
-pub const ui = @import("lib/ui.zig");
+pub const ipc = @import("lib/ipc.zig");
 pub const notify = @import("lib/notify.zig");
 ```
 

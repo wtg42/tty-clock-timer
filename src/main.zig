@@ -101,7 +101,7 @@ pub fn main(init: std.process.Init) !void {
     }
 
     // TODO: 暫時印出解析結果，之後會替換成實際的倒數計時功能
-    // 未來應整合 timer.zig、ui.zig、notify.zig 模組
+    // 未來應整合 timer.zig、ipc.zig、notify.zig 模組
     std.debug.print("Configuration:\n", .{});
     std.debug.print("  Duration: {} seconds\n", .{config.duration_seconds});
     std.debug.print("  Reset mode: {}\n", .{config.reset_mode});
