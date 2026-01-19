@@ -13,7 +13,8 @@
     * 模糊搜尋：`bash .opencode/skill/zig-std-index/scripts/search.sh <keyword>`
     * 精確讀取：`bash .opencode/skill/zig-std-index/scripts/retrieve.sh <symbol>` (例如：`std.time.Timer`)
 2.  **第二優先 (Online Reference)**：僅當本地 Skill 找不到資訊時，參考 [Zig Master Docs](https://ziglang.org/documentation/master/std/)。
-3.  **語言偏好**：回答與解釋請使用 **繁體中文**，技術術語（例如：Allocator, Struct, Defer）保留英文原文。
+3.  **實作前驗證**：開始實作任何使用 std 函式的功能前，必須使用 zig-std-index Skill 查詢該函式是否存在及正確用法，以避免使用不存在或已變更的 API。
+4.  **語言偏好**：回答與解釋請使用 **繁體中文**，技術術語（例如：Allocator, Struct, Defer）保留英文原文。
 
 ---
 
@@ -90,5 +91,15 @@ tty_clock_timer (單一執行檔)
 * **提交前檢查**：確保通過 `zig fmt` 與 `zig build test`。
 * **訊息語法**：使用英文，遵循 Conventional Commits（`feat:`, `fix:`, `docs:`, `refactor:`）。
 * **語言設定**：回答說明請一律使用 **繁體中文**。
+
+---
+
+## 📄 計劃書管理 (Plan Management)
+
+* **方針**：實作功能前，必須整理計劃書並儲存到 `docs/` 目錄。
+* **檔名格式**：使用統一名稱加上日期時間，例如 `integration-plan-YYYY-MM-DD-HH-MM.md`，以區分 timeline。
+* **歸檔機制**：在用戶同意實作後，自動將計劃書歸檔到 `docs/` 下。
+* **範例**：例如 `integration-plan-2026-01-19-12-00.md`。
+* **語言**：使用繁體中文，技術術語保留英文。
 
 ---
