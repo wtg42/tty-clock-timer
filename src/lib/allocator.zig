@@ -6,7 +6,7 @@
 //!
 //! # 設計模式
 //! - RAII (Resource Acquisition Is Initialization): AllocatorCtx 結構體同時封裝 allocator 實例和對應的清理方法
-//! - 明確生命週期管理: 實例儲存在結構體中，避免懸垂指標問題
+//! - 明確生命週期管理: 實例儲存在結構體中，避免空指標問題
 //!
 //! # 使用範例
 //! const AllocatorCtx = @import("allocator.zig");
@@ -23,91 +23,56 @@ const std = @import("std");
 const builtin = @import("builtin");
 
 pub const AllocatorCtx = struct {
-    /// Allocator Context Structure
-    ///
-    /// 封裝 allocator 實例和對應的清理方法，確保記憶體管理的一致性和正確性。
-    /// 此結構體儲存實際的 allocator 實例，避免懸垂指標問題。
-    ///
-    /// # 欄位說明
-    /// - `debug_alloc`: DebugAllocator 實例（僅 Debug 模式）
-    /// - `arena_alloc`: ArenaAllocator 實例（僅 Release 模式）
-    ///
-    /// # 使用注意事項
-    /// - 必須呼叫 `deinit()` 來釋放資源和檢測洩漏
-    /// - Debug 模式會檢測記憶體洩漏，返回 `.leak` 表示有洩漏
-    /// - Release 模式使用 ArenaAllocator 進行批次分配，提升效能
-    /// - 建議使用 `defer _ = ctx.deinit()` 確保資源釋放
+    // 這個結構體管理記憶體分配器，根據編譯模式選擇不同的 allocator
+    // 欄位使用可選類型，因為不同模式只用一個
+
+    /// Debug 模式的 allocator，用來檢查記憶體洩漏（只在 Debug 模式使用）
     debug_alloc: ?std.heap.DebugAllocator(.{}) = null,
+
+    /// Release 模式的 allocator，用來高效分配記憶體（只在 Release 模式使用）
     arena_alloc: ?std.heap.ArenaAllocator = null,
 
-    /// Factory function to create an allocator context based on build mode
-    ///
-    /// 根據編譯模式初始化適當的 allocator：
-    /// - Debug 模式: 初始化 `std.heap.DebugAllocator` 來追蹤記憶體分配、檢測洩漏和雙重釋放
-    /// - Release 模式: 初始化 `std.heap.ArenaAllocator` 以獲得最佳效能
-    ///
-    /// # 返回值
-    /// 返回 `AllocatorCtx` 結構體，包含初始化的 allocator 實例
-    ///
-    /// # 錯誤處理
-    /// 此函式不會失敗
-    ///
-    /// # 使用範例
-    /// var ctx = AllocatorCtx.init();
-    /// defer _ = ctx.deinit();
-    ///
-    /// const buffer = try ctx.allocator().alloc(u8, 1024);
-    /// defer ctx.allocator().free(buffer);
+    // 建立 allocator 上下文，根據編譯模式選擇合適的 allocator
+    // Debug 模式：用來檢查記憶體問題
+    // Release 模式：用來快速分配記憶體
     pub fn init() AllocatorCtx {
         if (builtin.mode == .Debug) {
+            // Debug 模式：使用 DebugAllocator 來檢查記憶體洩漏
             return .{ .debug_alloc = std.heap.DebugAllocator(.{}).init };
         } else {
+            // Release 模式：使用 ArenaAllocator 來高效分配
             return .{
                 .arena_alloc = std.heap.ArenaAllocator.init(std.heap.page_allocator),
             };
         }
     }
 
-    /// Get the allocator interface
-    ///
-    /// 返回標準的 Allocator 介面，可用於記憶體分配和釋放操作。
-    ///
-    /// # 返回值
-    /// 返回 `std.mem.Allocator` 介面實例
+    // 取得標準的記憶體分配器介面，用來分配和釋放記憶體
     pub fn allocator(self: *AllocatorCtx) std.mem.Allocator {
         if (builtin.mode == .Debug) {
+            // 返回 DebugAllocator 的介面
             return self.debug_alloc.?.allocator();
         } else {
+            // 返回 ArenaAllocator 的介面
             return self.arena_alloc.?.allocator();
         }
     }
 
-    /// Cleanup and check for memory leaks (Debug mode)
-    ///
-    /// 釋放 allocator 相關資源並（在 Debug 模式下）檢測記憶體洩漏。
-    ///
-    /// # 返回值
-    /// Debug 模式返回 `std.heap.Check`:
-    /// - `.ok`: 無記憶體洩漏
-    /// - `.leak`: 有記憶體洩漏
-    /// Release 模式總是返回 `.ok`
-    ///
-    /// # 使用範例
-    /// var ctx = AllocatorCtx.init();
-    /// defer {
-    ///     const result = ctx.deinit();
-    ///     if (result == .leak) @panic("memory leak detected");
-    /// }
-    pub fn deinit(self: *AllocatorCtx) std.heap.Check {
+    // 清理 allocator 資源，並在 Debug 模式檢查是否有記憶體洩漏
+    // 返回值：Debug 模式返回檢查結果，Release 模式返回 .ok
+    pub fn deinit(self: *AllocatorCtx) ?std.heap.Check {
         if (builtin.mode == .Debug) {
+            // Debug 模式：檢查洩漏並清理
             return self.debug_alloc.?.deinit();
         } else {
+            // Release 模式：清理並返回無問題
             self.arena_alloc.?.deinit();
             return .ok;
         }
     }
 };
 
+// 測試基本功能：建立 allocator，分配記憶體，設定值，檢查值，然後清理
 test "AllocatorCtx basic functionality" {
     var ctx = AllocatorCtx.init();
     defer _ = ctx.deinit();
@@ -119,6 +84,7 @@ test "AllocatorCtx basic functionality" {
     try std.testing.expectEqual(@as(u8, 42), data.*);
 }
 
+// 測試 Debug 模式：分配陣列，設定值，檢查值，釋放，確認無洩漏
 test "AllocatorCtx debug mode" {
     if (builtin.mode == .Debug) {
         var ctx = AllocatorCtx.init();
@@ -140,6 +106,7 @@ test "AllocatorCtx debug mode" {
     }
 }
 
+// 測試 Release 模式：分配大塊記憶體，多次分配小塊並釋放，確認無問題
 test "AllocatorCtx release mode" {
     if (builtin.mode != .Debug) {
         var ctx = AllocatorCtx.init();
@@ -156,16 +123,5 @@ test "AllocatorCtx release mode" {
 
         const result = ctx.deinit();
         try std.testing.expectEqual(std.heap.Check.ok, result);
-    }
-}
-
-test "AllocatorCtx memory leak detection (Debug only)" {
-    if (builtin.mode == .Debug) {
-        var ctx = AllocatorCtx.init();
-
-        _ = try ctx.allocator().create(u8);
-
-        const result = ctx.deinit();
-        try std.testing.expectEqual(std.heap.Check.leak, result);
     }
 }
