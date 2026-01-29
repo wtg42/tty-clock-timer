@@ -1,6 +1,6 @@
 # 🤖 AGENTS.md - Agentic Coding Guidelines for tty-clock-timer
 
-這是針對 `tty-clock-timer` 專案的 AI 協作指南。請嚴格遵守以下規範以確保代碼品質與 Zig master 版本一致性。
+這是針對 `tty-clock-timer` 專案的 AI 協作指南。請嚴格遵守以下規範以確保代碼品質、Zig master 版本一致性、以及 core/tui 功能分工清晰。
 
 ---
 
@@ -9,97 +9,147 @@
 > [!IMPORTANT]
 > **優先權衝突處理**：禁止優先搜尋網路。Zig `master` 版本變動極快，網路資訊（如 StackOverflow/舊文檔）極易過時。
 
-1.  **第一優先 (Local Source)**：必須調用本地 `zig-std-index` Skill。
-    * 模糊搜尋：`bash .opencode/skill/zig-std-index/scripts/search.sh <keyword>`
-    * 精確讀取：`bash .opencode/skill/zig-std-index/scripts/retrieve.sh <symbol>` (例如：`std.time.Timer`)
-2.  **第二優先 (Online Reference)**：僅當本地 Skill 找不到資訊時，參考 [Zig Master Docs](https://ziglang.org/documentation/master/std/)。
-3.  **實作前驗證**：開始實作任何使用 std 函式的功能前，必須使用 zig-std-index Skill 查詢該函式是否存在及正確用法，以避免使用不存在或已變更的 API。
-4.  **語言偏好**：回答與解釋請使用 **繁體中文**，技術術語（例如：Allocator, Struct, Defer）保留英文原文。
+1. **第一優先 (Local Source)**：必須調用本地 `zig-std-index` Skill。
+   - 模糊搜尋：`bash .opencode/skill/zig-std-index/scripts/search.sh <keyword>`
+   - 精確讀取：`bash .opencode/skill/zig-std-index/scripts/retrieve.sh <symbol>`（例如：`std.time.Timer`）
+2. **第二優先 (Online Reference)**：僅當本地 Skill 找不到資訊時，參考 [Zig Master Docs](https://ziglang.org/documentation/master/std/)。
+3. **實作前驗證**：開始實作任何使用 std 函式的功能前，必須使用 zig-std-index Skill 查詢該函式是否存在及正確用法，以避免使用不存在或已變更的 API。
+4. **語言偏好**：回答與解釋請使用 **繁體中文**，技術術語（例如：Allocator, Struct, Defer）保留英文原文。
 
 ---
 
-## 🛠️ 核心指令 (Quick Commands)
+## 📁 專案範圍與分工 (Scope)
 
-* **Build**: `zig build`
-* **Run**: `zig build run -- [args]`
-* **Test All**: `zig build test`
-* **Test File**: `zig test <file> --test-filter "<pattern>"`
-* **Format**: `zig fmt src/*.zig` (提交前必執行)
+- `core/`：CLI 核心功能（Zig）。
+- `tui/`：OpenTUI 畫面功能（TypeScript + Solid）。
+- 修改任何核心邏輯先看 `core/src`，修改 UI 先看 `tui/src`。
 
 ---
 
-## 📝 程式碼風格 (Code Style)
+## 🛠️ 指令總覽 (Commands)
 
-### **格式與命名 (Formatting & Naming)**
-* **縮排**：一律使用 4 空格，完全遵循 `zig fmt` 自動格式化。
-* **命名規範**：
-    * `snake_case`: 函式、變數、模組名稱。
-    * `CamelCase`: 類型 (Types)、結構體 (Structs)。
-    * `SCREAMING_SNAKE_CASE`: 常數。
-* **長度限制**：單行建議 100-120 字元，禁止手動調整非標準格式。
+### Core (Zig)
 
-### **記憶體管理 (Memory Management)**
-* **原則**：明確資源生命週期，遵循 RAII 模式。
-* **工具選擇**：
-    * Debug 模式：使用 `DebugAllocator` 進行洩漏偵測。
-    * Release 模式：效能優先使用 `ArenaAllocator`。
-* **生命週期**：分配資源後，必須立即使用 `defer` 確保清理。
+- **Build**：`zig build`（在 `core/` 目錄執行）
+- **Run**：`zig build run -- [args]`
+- **Test All**：`zig build test`
+- **Test File**：`zig test core/src/lib/config.zig --test-filter "parseArgsFromSlice"`
+- **Format**：`zig fmt core/src/*.zig core/src/lib/*.zig`
 
-### **錯誤處理 (Error Handling)**
-* **自定義錯誤**：`pub const ParseError = error{ ... };`。
-* **錯誤聯集**：回傳類型應標註為 `!ReturnType`。
-* **傳播與邊界**：優先使用 `try` 向上傳播，在邊界使用 `catch` 處理。
+### TUI (OpenTUI)
+
+- **Dev**：`bun run dev`（在 `tui/` 目錄執行）
+- **Lint/Test**：目前未提供 lint 或 test script（不要假設存在）
+- **Type Check**：目前未提供專用命令（`tsconfig.json` 設為 `noEmit`）
 
 ---
 
-## 🏗️ 專案架構 (Architecture)
+## 🧪 測試規範 (Testing)
 
-### **模組化規劃**
-* **單一職責**：每個檔案僅處理一個主結構或一組相關邏輯。
-* **封裝**：預設私有，僅對外暴露必要的 `pub` API，並將 `pub` 函式置於檔案前半部。
+- **測試位置**：Zig 實作檔案內的 `test` 區塊（Inline testing）。
+- **命名格式**：`"module/function - scenario"`（例如：`"config/parse - valid minutes"`）。
+- **錯誤路徑**：使用 `std.testing.expectError` 驗證預期錯誤。
+- **單檔/單測試**：優先使用 `zig test <file> --test-filter "<pattern>"` 精準跑測試。
 
-### **UI 重構架構**
-根據 UI 重構計畫，採用 **Zig + Embedded Node.js SEA** 架構：
+---
+
+## 🧱 架構與檔案導覽 (Architecture)
+
+### Core (Zig)
+
+- `core/src/main.zig`：CLI 進入點，負責參數解析、I/O、錯誤處理。
+- `core/src/root.zig`：Library 公開 API。
+- `core/src/lib/config.zig`：CLI 參數解析與設定。
+- `core/src/lib/timer.zig`：倒數計時與狀態機（核心邏輯）。
+- `core/src/lib/allocator.zig`：統一記憶體管理上下文。
+- `core/src/lib/ipc.zig`：IPC 管理，與 OpenTUI 子進程通訊。
+
+### TUI (OpenTUI)
+
+- `tui/src/index.tsx`：OpenTUI 入口與 UI 組裝。
+- `tui/tsconfig.json`：TypeScript 設定，`strict: true`、`noEmit: true`。
+
+### UI 重構架構
+
+採用 **Zig + Embedded Node.js SEA**：
 ```
 tty_clock_timer (單一執行檔)
 ├── Zig 主程序 (CLI + Timer + IPC)
 └── Embedded Node.js SEA (OpenTUI UI)
 ```
 
-### **目錄導覽**
-* `src/main.zig`: CLI 進入點。
-* `src/root.zig`: 庫 (Library) 公開 API。
-* `src/lib/config.zig`: 參數解析與配置管理。
-* `src/lib/timer.zig`: 核心倒數計時與狀態機邏輯。
-* `src/lib/allocator.zig`: 統一的記憶體管理上下文。
-* `src/lib/ipc.zig`: IPC 通訊管理，負責與 Node.js OpenTUI 進程通訊 (重構自 ui.zig)。
-* `src/lib/embedded_ui.zig`: Node.js SEA binary embedding 管理 (新增)。
-* `src/lib/notify.zig`: Linux desktop notification 介面 (待實作)。
+---
+
+## 📝 程式碼風格 (Code Style)
+
+### Zig 通用規範
+
+- **縮排**：4 空格，完全依賴 `zig fmt`。
+- **單行長度**：建議 100-120 字元，禁止手動拆行破壞格式。
+- **imports**：先 `std`，再外部模組，最後本地模組；避免不必要的別名。
+- **命名**：
+  - `snake_case`：函式、變數、模組。
+  - `CamelCase`：Types、Structs。
+  - `SCREAMING_SNAKE_CASE`：常數。
+- **公開 API**：`pub` 函式集中在檔案前半段，並保持最小化可見範圍。
+
+### Zig 記憶體管理
+
+- 明確資源生命週期，遵循 RAII。
+- Debug 模式使用 `DebugAllocator` 偵測洩漏。
+- Release 模式優先 `ArenaAllocator`（效能）。
+- 分配後立刻 `defer` 清理，確保 early-return 也會釋放。
+- 參考 `core/src/lib/allocator.zig` 的 allocator context 實作。
+
+### Zig 錯誤處理
+
+- 自定義錯誤集合：`pub const ParseError = error{ ... };`。
+- 回傳型別使用錯誤聯集：`!ReturnType`。
+- 內部流程優先 `try` 傳播，邊界（CLI/IO）使用 `catch` 轉為使用者訊息。
+
+### Zig 類型與資料
+
+- CLI/計時器使用明確整數型別（例如 `u32` 秒數）。
+- 乘法/轉換需處理溢位，使用 `std.math.mul` 或 `std.fmt.parseInt` 的錯誤回傳。
+- logging 用 `std.log`，錯誤輸出與 usage 使用 writer/print。
+
+### TUI (TypeScript/TSX)
+
+- **格式**：沿用現有風格（2 空格縮排）。
+- **imports**：第三方（`@opentui/*`、`solid-js`）在前，本地模組在後。
+- **型別**：遵守 `tsconfig.json` 的 `strict: true`。
+- **JSX**：使用 `@opentui/solid` 的 JSX runtime，保持目前的 `<box>`、`<text>` 樣式。
+- **副作用**：入口檔只負責 render，狀態邏輯請獨立模組化。
 
 ---
 
-## 🧪 測試規範 (Testing)
+## ✅ 格式化與提交前檢查 (Pre-commit)
 
-* **測試位置**：實作檔案內的 `test` 區塊（Inline testing）。
-* **命名格式**：`"module/function - scenario"` (例如：`"config/parse - valid minutes"`)。
-* **錯誤路徑**：使用 `std.testing.expectError` 驗證預期錯誤。
+- Zig 變更必跑：`zig fmt core/src/*.zig core/src/lib/*.zig`。
+- 測試建議：`zig build test`。
+- git commit 訊息使用英文，遵循 Conventional Commits（`feat:`, `fix:`, `docs:`, `refactor:`）。
 
 ---
 
-## 📋 Git 工作流與協作
+## 🧭 Cursor / Copilot 規則
 
-* **提交前檢查**：確保通過 `zig fmt` 與 `zig build test`。
-* **訊息語法**：使用英文，遵循 Conventional Commits（`feat:`, `fix:`, `docs:`, `refactor:`）。
-* **語言設定**：回答說明請一律使用 **繁體中文**。
+- 未發現 `.cursor/rules/`、`.cursorrules`、或 `.github/copilot-instructions.md`。
 
 ---
 
 ## 📄 計劃書管理 (Plan Management)
 
-* **方針**：實作功能前，必須整理計劃書並儲存到 `docs/` 目錄。
-* **檔名格式**：使用統一名稱加上日期時間，例如 `integration-plan-YYYY-MM-DD-HH-MM.md`，以區分 timeline。
-* **歸檔機制**：在用戶同意實作後，自動將計劃書歸檔到 `docs/` 下。
-* **範例**：例如 `integration-plan-2026-01-19-12-00.md`。
-* **語言**：使用繁體中文，技術術語保留英文。
+- **方針**：實作功能前，必須整理計劃書並儲存到 `docs/` 目錄。
+- **檔名格式**：`integration-plan-YYYY-MM-DD-HH-MM.md`。
+- **歸檔機制**：用戶同意實作後，計劃書自動歸檔到 `docs/`。
+- **語言**：使用繁體中文，技術術語保留英文。
+
+---
+
+## 🧩 其他注意事項
+
+- `core/` 與 `tui/` 的依賴與工具鏈獨立，請勿混用指令。
+- 若新增 std API 使用，先用 `zig-std-index` 驗證。
+- 問題回報與說明一律使用繁體中文。
 
 ---
