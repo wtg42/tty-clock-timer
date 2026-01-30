@@ -9,12 +9,60 @@
 > [!IMPORTANT]
 > **優先權衝突處理**：禁止優先搜尋網路。Zig `master` 版本變動極快，網路資訊（如 StackOverflow/舊文檔）極易過時。
 
-1. **第一優先 (Local Source)**：必須調用本地 `zig-std-index` Skill。
-   - 模糊搜尋：`bash .opencode/skill/zig-std-index/scripts/search.sh <keyword>`
-   - 精確讀取：`bash .opencode/skill/zig-std-index/scripts/retrieve.sh <symbol>`（例如：`std.time.Timer`）
-2. **第二優先 (Online Reference)**：僅當本地 Skill 找不到資訊時，參考 [Zig Master Docs](https://ziglang.org/documentation/master/std/)。
-3. **實作前驗證**：開始實作任何使用 std 函式的功能前，必須使用 zig-std-index Skill 查詢該函式是否存在及正確用法，以避免使用不存在或已變更的 API。
-4. **語言偏好**：回答與解釋請使用 **繁體中文**，技術術語（例如：Allocator, Struct, Defer）保留英文原文。
+1.  **第一優先 (Local Source)**：必須調用本地 `zig-std-index` Skill。
+    - 模糊搜尋：`bash .opencode/skill/zig-std-index/scripts/search.sh <keyword>`
+    - 精確讀取：`bash .opencode/skill/zig-std-index/scripts/retrieve.sh <symbol>` (例如：`std.time.Timer`)
+2.  **第二優先 (Online Reference)**：僅當本地 Skill 找不到資訊時，參考 [Zig Master Docs](https://ziglang.org/documentation/master/std/)。
+3.  **實作前驗證**：開始實作任何使用 std 函式的功能前，必須使用 zig-std-index Skill 查詢該函式是否存在及正確用法，以避免使用不存在或已變更的 API。
+    > [!NOTE]
+    > **子代理適用**：若需委派 Task 進行 Zig 相關研究，也必須在 prompt 中明確指示使用 `zig-std-index` Skill，禁止子代理自行搜索或推測。
+4.  **語言偏好**：回答與解釋請使用 **繁體中文**，技術術語（例如：Allocator, Struct, Defer）保留英文原文。
+
+---
+
+## 🔄 子代理工具使用規範 (Subagent Guidelines)
+
+當使用 `task` 工具啟動任何類型的子代理（`general` 或 `explore`）時，**必須遵守以下規範**：
+
+### **適用範圍**
+- **general 代理**：研究 Zig std 相關問題時強制使用 Skill
+- **explore 代理**：搜索代碼庫時若涉及 Zig API 查詢，同樣強制使用 Skill
+
+### **強制使用本地 Skill**
+- **明確指示**：在委派給子代理的 prompt 中，**必須明確要求**使用 `zig-std-index` Skill
+- **禁止自行搜索**：子代理不得自行網路搜索或依賴記憶推測 Zig API
+- **正確指令範例**：
+  > "使用以下命令查詢 Zig std 庫：
+  > bash .opencode/skill/zig-std-index/scripts/search.sh <keyword>
+  > bash .opencode/skill/zig-std-index/scripts/retrieve.sh <symbol>"
+
+### **資訊驗證機制**
+- 若子代理回報的資訊涉及 Zig API 存在性、函式簽名、結構體欄位：
+  1. **必須**使用本地 Skill 再次驗證
+  2. **或**執行 `zig build` 編譯驗證
+- **不信任原則**：對於子代理提供的 Zig API 資訊保持質疑，優先相信本地 Skill 結果
+
+### **錯誤處理**
+- 若子代理無法找到所需資訊，**不得**允許其推測或網路搜索
+- 正確做法：回報給父代理，由我直接使用 Skill 查詢或參考官方文件
+
+### **使用範例**
+
+```zig
+// ❌ 錯誤：讓子代理自行搜索
+task({
+    description: "Search Zig std",
+    prompt: "Search for fcntl in Zig standard library",
+    subagent_type: "explore"
+})
+
+// ✅ 正確：明確要求使用 Skill
+task({
+    description: "Search Zig std",
+    prompt: "使用 bash .opencode/skill/zig-std-index/scripts/search.sh 'fcntl' 查詢",
+    subagent_type: "explore"
+})
+```
 
 ---
 
