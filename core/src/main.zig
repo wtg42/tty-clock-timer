@@ -10,6 +10,69 @@ const Io = std.Io;
 // const tty_clock_timer = @import("tty_clock_timer");
 const allocator_ctx = @import("lib/allocator.zig");
 const conf = @import("lib/config.zig");
+const ipc = @import("lib/ipc.zig");
+const timer_mod = @import("lib/timer.zig");
+
+const StdinStream = enum { stdin };
+
+/// 將 TimerState 對應到 IPC status 字串
+///
+/// 步驟：
+/// 1. 依狀態分支
+/// 2. 回傳對應字串
+fn timerStateToStatus(state: timer_mod.TimerState) []const u8 {
+    return switch (state) {
+        .idle => "idle",
+        .running => "running",
+        .paused => "paused",
+        .finished => "finished",
+    };
+}
+
+/// 釋放 IPC Message 中的動態字串
+///
+/// 步驟：
+/// 1. 依訊息類型判斷
+/// 2. 釋放對應欄位
+fn freeMessage(allocator: std.mem.Allocator, message: ipc.Message) void {
+    switch (message) {
+        .update_timer => |payload| allocator.free(payload.status),
+        .keyboard_input => |payload| allocator.free(payload.key),
+        else => {},
+    }
+}
+
+/// 從 stdin reader 解析輸入並判斷是否退出
+///
+/// 步驟：
+/// 1. 讀取 buffered 資料並找換行
+/// 2. 解析為鍵盤訊息或 JSON
+/// 3. 判斷是否觸發退出
+fn handleStdinInput(allocator: std.mem.Allocator, reader: *Io.Reader) !bool {
+    while (true) {
+        const buffered = reader.buffered();
+        if (buffered.len == 0) return false;
+
+        const newline_index = std.mem.findScalarPos(u8, buffered, 0, '\n') orelse return false;
+        const line = buffered[0..newline_index];
+        reader.toss(newline_index + 1);
+
+        const trimmed = std.mem.trim(u8, line, " \t\r\n");
+        if (trimmed.len == 0) continue;
+
+        if (std.mem.eql(u8, trimmed, "q")) return true;
+
+        const parsed = ipc.parseMessage(allocator, trimmed) catch |err| {
+            if (err == error.OutOfMemory) return err;
+            continue;
+        };
+        defer freeMessage(allocator, parsed);
+        switch (parsed) {
+            .keyboard_input => |payload| if (ipc.handleKeyboardInput(payload.key)) return true,
+            else => {},
+        }
+    }
+}
 
 /// 程式主入口點
 ///
@@ -45,7 +108,15 @@ pub fn main(init: std.process.Init) !void {
     var stdout_file_writer: Io.File.Writer = .init(.stdout(), io, &stdout_buffer);
     const stdout_writer = &stdout_file_writer.interface;
 
+    var stderr_buffer: [1024]u8 = undefined;
+    var stderr_file_writer: Io.File.Writer = .init(.stderr(), io, &stderr_buffer);
+    const stderr_writer = &stderr_file_writer.interface;
+
     // 解析 CLI 參數，使用 catch 處理可能的錯誤
+    // 步驟：
+    // 1. 解析參數
+    // 2. 輸出錯誤訊息
+    // 3. 以錯誤碼退出
     const config = conf.parseArgs(allocator, init.minimal) catch |err| {
         switch (err) {
             conf.ParseError.MissingArguments => {
@@ -85,6 +156,10 @@ pub fn main(init: std.process.Init) !void {
     };
 
     // 顯示使用說明訊息
+    // 步驟：
+    // 1. 輸出 help 內容
+    // 2. flush
+    // 3. return
     if (config.show_help) {
         try stdout_writer.print("Usage: tty_clock_timer [OPTIONS]\n", .{});
         try stdout_writer.print("\n", .{});
@@ -100,10 +175,69 @@ pub fn main(init: std.process.Init) !void {
         return;
     }
 
-    // TODO: 暫時印出解析結果，之後會替換成實際的倒數計時功能
-    // 未來應整合 timer.zig、ipc.zig、notify.zig 模組
-    std.debug.print("Configuration:\n", .{});
-    std.debug.print("  Duration: {} seconds\n", .{config.duration_seconds});
-    std.debug.print("  Reset mode: {}\n", .{config.reset_mode});
-    std.debug.print("  Show help: {}\n", .{config.show_help});
+    const total_duration_seconds = config.duration_seconds;
+    const total_duration_ns = @as(u64, total_duration_seconds) * std.time.ns_per_s;
+
+    var countdown_timer = timer_mod.CountdownTimer.init(total_duration_ns);
+    countdown_timer.start() catch |err| {
+        try stderr_writer.print("Error: Failed to start timer ({s})\n", .{@errorName(err)});
+        try stderr_writer.flush();
+        std.process.exit(1);
+    };
+
+    var poller = Io.poll(allocator, StdinStream, .{ .stdin = Io.File.stdin() });
+    defer poller.deinit();
+
+    const tick_duration = Io.Clock.Duration{
+        .clock = .awake,
+        .raw = Io.Duration.fromSeconds(1),
+    };
+
+    // 主循環
+    // 步驟：
+    // 1. 輪詢 stdin
+    // 2. 更新 timer 並送 IPC
+    // 3. sleep 1 秒
+    while (true) {
+        _ = try poller.pollTimeout(0);
+        if (poller.reader(.stdin).bufferedLen() > 0) {
+            if (try handleStdinInput(allocator, poller.reader(.stdin))) {
+                ipc.sendExit(allocator, stdout_writer) catch |err| {
+                    try stderr_writer.print("Error: Failed to send exit message ({s})\n", .{@errorName(err)});
+                    try stderr_writer.flush();
+                    std.process.exit(1);
+                };
+                return;
+            }
+        }
+
+        _ = countdown_timer.update();
+        const finished = countdown_timer.isFinished();
+        const remaining_seconds = @as(u32, @intCast(countdown_timer.remaining_ns / std.time.ns_per_s));
+        ipc.updateTimer(allocator, stdout_writer, remaining_seconds, total_duration_seconds, timerStateToStatus(countdown_timer.state)) catch |err| {
+            try stderr_writer.print("Error: Failed to send timer update ({s})\n", .{@errorName(err)});
+            try stderr_writer.flush();
+            std.process.exit(1);
+        };
+
+        if (finished) {
+            ipc.notifyTimerFinished(allocator, stdout_writer, total_duration_seconds) catch |err| {
+                try stderr_writer.print("Error: Failed to send timer finished message ({s})\n", .{@errorName(err)});
+                try stderr_writer.flush();
+                std.process.exit(1);
+            };
+            ipc.sendExit(allocator, stdout_writer) catch |err| {
+                try stderr_writer.print("Error: Failed to send exit message ({s})\n", .{@errorName(err)});
+                try stderr_writer.flush();
+                std.process.exit(1);
+            };
+            return;
+        }
+
+        Io.Clock.Duration.sleep(tick_duration, io) catch |err| {
+            try stderr_writer.print("Error: Failed to sleep ({s})\n", .{@errorName(err)});
+            try stderr_writer.flush();
+            std.process.exit(1);
+        };
+    }
 }

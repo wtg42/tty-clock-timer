@@ -45,16 +45,29 @@ pub const ParseError = error{
 ///   - Config: 解析成功的設定物件
 ///   - ParseError: 解析失敗的錯誤
 pub fn parseArgs2(allocator: std.mem.Allocator) !Config {
+    // 步驟：
+    // 1. 讀取 argv
+    // 2. 釋放 argv
+    // 3. 轉交 slice 解析
     const args = try std.process.argsAlloc(allocator);
     defer std.process.argsFree(allocator, args);
     return parseArgsFromSlice(args[1..]);
 }
 
 pub fn parseArgs(allocator: std.mem.Allocator, init: std.process.Init.Minimal) !Config {
+    // 步驟：
+    // 1. 收集 argv（跳過 argv[0]）
+    // 2. 建立 slice
+    // 3. 轉交解析
     var argsSlice = try std.ArrayList([]const u8).initCapacity(allocator, 0);
+    defer argsSlice.deinit(allocator);
     var args = init.args.iterate();
+    var is_first = true;
     while (args.next()) |arg| {
-        std.log.info("arg: {s}", .{arg});
+        if (is_first) {
+            is_first = false;
+            continue;
+        }
         try argsSlice.append(allocator, arg);
     }
 
@@ -76,6 +89,10 @@ pub fn parseArgs(allocator: std.mem.Allocator, init: std.process.Init.Minimal) !
 ///   - Config: 解析成功的設定物件
 ///   - ParseError: 解析失敗的錯誤（缺少參數、無效格式等）
 pub fn parseArgsFromSlice(args: []const []const u8) !Config {
+    // 步驟：
+    // 1. 初始化預設 config
+    // 2. 判斷 help 或時間參數
+    // 3. 回傳解析結果或錯誤
     var config = Config{
         .duration_seconds = 0,
         .reset_mode = false,
@@ -126,18 +143,24 @@ pub fn parseArgsFromSlice(args: []const []const u8) !Config {
 /// 檢查參數字串是否符合 help flag
 /// 支援：--help 和 -h
 fn isHelpArg(arg: []const u8) bool {
+    // 步驟：
+    // 1. 比對長短旗標
     return std.mem.eql(u8, arg, "--help") or std.mem.eql(u8, arg, "-h");
 }
 
 /// 檢查參數字串是否符合 minutes flag
 /// 支援：--minutes 和 -m
 fn isMinutesArg(arg: []const u8) bool {
+    // 步驟：
+    // 1. 比對長短旗標
     return std.mem.eql(u8, arg, "--minutes") or std.mem.eql(u8, arg, "-m");
 }
 
 /// 檢查參數字串是否符合 seconds flag
 /// 支援：--seconds 和 -s
 fn isSecondsArg(arg: []const u8) bool {
+    // 步驟：
+    // 1. 比對長短旗標
     return std.mem.eql(u8, arg, "--seconds") or std.mem.eql(u8, arg, "-s");
 }
 

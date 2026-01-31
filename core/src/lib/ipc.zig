@@ -22,10 +22,10 @@
 /// var allocator = std.heap.page_allocator;
 ///
 /// // Send timer update
-/// try ipc.updateTimer(allocator, 120, 300, "running");
+/// try ipc.updateTimer(allocator, stdout_writer, 120, 300, "running");
 ///
 /// // Receive message
-/// const msg = try ipc.receiveAndFilterMessage(allocator);
+/// const msg = try ipc.receiveAndFilterMessage(allocator, stdin_reader);
 /// switch (msg) {
 ///     .keyboard_input => |k| if (ipc.handleKeyboardInput(k.key)) { /* handle quit */ },
 ///     else => {},
@@ -33,6 +33,7 @@
 /// ```
 ///
 const std = @import("std");
+const Io = std.Io;
 
 /// IPC Message Types
 /// Defines the different types of messages that can be exchanged via IPC.
@@ -81,6 +82,10 @@ pub const Message = union(MessageType) {
     /// @param self The message to serialize
     /// @param jws JSON writer/stream interface
     pub fn jsonStringify(self: Message, jws: anytype) !void {
+        // 步驟：
+        // 1. 寫入 type
+        // 2. 寫入 payload 欄位
+        // 3. 結束物件
         try jws.beginObject();
         try jws.objectField("type");
         try jws.write(@tagName(self));
@@ -114,6 +119,10 @@ pub const Message = union(MessageType) {
 /// @param json JSON string to parse
 /// @return Parsed Message or error if invalid format/type
 pub fn parseMessage(allocator: std.mem.Allocator, json: []const u8) !Message {
+    // 步驟：
+    // 1. 解析 JSON
+    // 2. 依 type 轉換
+    // 3. 回傳 Message
     var parsed = try std.json.parseFromSlice(std.json.Value, allocator, json, .{});
     defer parsed.deinit();
 
@@ -143,12 +152,15 @@ pub fn parseMessage(allocator: std.mem.Allocator, json: []const u8) !Message {
 /// followed by a newline for message delimitation.
 /// @param allocator Memory allocator for JSON serialization
 /// @param message The IPC message to send
-pub fn sendMessage(allocator: std.mem.Allocator, message: Message) !void {
+pub fn sendMessage(allocator: std.mem.Allocator, writer: *Io.Writer, message: Message) !void {
+    // 步驟：
+    // 1. 序列化 JSON
+    // 2. 寫入 stdout writer
+    // 3. 加上換行
     const json = try std.json.Stringify.valueAlloc(allocator, message, .{});
     defer allocator.free(json);
-    const stdout = std.io.getStdOut().writer();
-    try stdout.writeAll(json);
-    try stdout.writeByte('\n');
+    try writer.writeAll(json);
+    try writer.writeByte('\n');
 }
 
 /// Receive and filter IPC message from stdin
@@ -157,24 +169,22 @@ pub fn sendMessage(allocator: std.mem.Allocator, message: Message) !void {
 /// Only accepts valid JSON messages or predefined keyboard commands.
 /// @param allocator Memory allocator for parsing
 /// @return Parsed Message or error on invalid input
-pub fn receiveAndFilterMessage(allocator: std.mem.Allocator) !Message {
-    const stdin = std.io.getStdIn().reader();
-    var buffer: [1024]u8 = undefined;
-    const line = try stdin.readUntilDelimiterOrEof(&buffer, '\n');
-    if (line) |l| {
-        // Try to parse as JSON message
-        if (parseMessage(allocator, l)) |msg| {
-            return msg;
-        } else |_| {
-            // Check if it's a predefined keyboard command
-            if (std.mem.eql(u8, std.mem.trim(u8, l, " \t\r\n"), "q")) {
-                return Message{ .keyboard_input = .{ .key = try allocator.dupe(u8, "q") } };
-            } else {
-                return error.InvalidInput;
-            }
+pub fn receiveAndFilterMessage(allocator: std.mem.Allocator, reader: *Io.Reader) !Message {
+    // 步驟：
+    // 1. 讀取一行
+    // 2. 嘗試解析 JSON
+    // 3. 退化為鍵盤指令
+    const line = try reader.takeDelimiter('\n') orelse return error.EndOfInput;
+    // Try to parse as JSON message
+    if (parseMessage(allocator, line)) |msg| {
+        return msg;
+    } else |_| {
+        // Check if it's a predefined keyboard command
+        if (std.mem.eql(u8, std.mem.trim(u8, line, " \t\r\n"), "q")) {
+            return Message{ .keyboard_input = .{ .key = try allocator.dupe(u8, "q") } };
+        } else {
+            return error.InvalidInput;
         }
-    } else {
-        return error.EndOfInput;
     }
 }
 
@@ -184,28 +194,38 @@ pub fn receiveAndFilterMessage(allocator: std.mem.Allocator) !Message {
 /// @param remaining_seconds Seconds left in countdown
 /// @param total_duration Total timer duration in seconds
 /// @param status Timer status string ("running", "paused", etc.)
-pub fn updateTimer(allocator: std.mem.Allocator, remaining_seconds: u32, total_duration: u32, status: []const u8) !void {
+pub fn updateTimer(allocator: std.mem.Allocator, writer: *Io.Writer, remaining_seconds: u32, total_duration: u32, status: []const u8) !void {
+    // 步驟：
+    // 1. 複製 status
+    // 2. 組裝 Message
+    // 3. 發送訊息
     const status_dup = try allocator.dupe(u8, status);
     defer allocator.free(status_dup);
     const message = Message{ .update_timer = .{ .remaining_seconds = remaining_seconds, .total_duration = total_duration, .status = status_dup } };
-    try sendMessage(allocator, message);
+    try sendMessage(allocator, writer, message);
 }
 
 /// Send timer finished notification
 /// Creates and sends a timer_finished message when countdown reaches zero.
 /// @param allocator Memory allocator
 /// @param total_duration The total duration that was set for the timer
-pub fn notifyTimerFinished(allocator: std.mem.Allocator, total_duration: u32) !void {
+pub fn notifyTimerFinished(allocator: std.mem.Allocator, writer: *Io.Writer, total_duration: u32) !void {
+    // 步驟：
+    // 1. 組裝 Message
+    // 2. 發送訊息
     const message = Message{ .timer_finished = .{ .total_duration = total_duration } };
-    try sendMessage(allocator, message);
+    try sendMessage(allocator, writer, message);
 }
 
 /// Send exit command message
 /// Creates and sends an exit message to signal application termination.
 /// @param allocator Memory allocator
-pub fn sendExit(allocator: std.mem.Allocator) !void {
+pub fn sendExit(allocator: std.mem.Allocator, writer: *Io.Writer) !void {
+    // 步驟：
+    // 1. 組裝 Message
+    // 2. 發送訊息
     const message = Message{ .exit = {} };
-    try sendMessage(allocator, message);
+    try sendMessage(allocator, writer, message);
 }
 
 /// Handle filtered keyboard input
@@ -214,6 +234,8 @@ pub fn sendExit(allocator: std.mem.Allocator) !void {
 /// @param key The key string to check
 /// @return true if key is handled, false otherwise
 pub fn handleKeyboardInput(key: []const u8) bool {
+    // 步驟：
+    // 1. 比對允許的按鍵
     if (std.mem.eql(u8, key, "q")) {
         // 退出动作，可能在更高层处理
         return true;

@@ -36,6 +36,9 @@ pub const AllocatorCtx = struct {
     // Debug 模式：用來檢查記憶體問題
     // Release 模式：用來快速分配記憶體
     pub fn init() AllocatorCtx {
+        // 步驟：
+        // 1. 判斷編譯模式
+        // 2. 建立對應 allocator
         if (builtin.mode == .Debug) {
             // Debug 模式：使用 DebugAllocator 來檢查記憶體洩漏
             return .{ .debug_alloc = std.heap.DebugAllocator(.{}).init };
@@ -49,6 +52,9 @@ pub const AllocatorCtx = struct {
 
     // 取得標準的記憶體分配器介面，用來分配和釋放記憶體
     pub fn allocator(self: *AllocatorCtx) std.mem.Allocator {
+        // 步驟：
+        // 1. 判斷編譯模式
+        // 2. 回傳對應介面
         if (builtin.mode == .Debug) {
             // 返回 DebugAllocator 的介面
             return self.debug_alloc.?.allocator();
@@ -61,6 +67,10 @@ pub const AllocatorCtx = struct {
     // 清理 allocator 資源，並在 Debug 模式檢查是否有記憶體洩漏
     // 返回值：Debug 模式返回檢查結果，Release 模式返回 .ok
     pub fn deinit(self: *AllocatorCtx) ?std.heap.Check {
+        // 步驟：
+        // 1. 判斷編譯模式
+        // 2. 清理 allocator
+        // 3. 回傳檢查結果
         if (builtin.mode == .Debug) {
             // Debug 模式：檢查洩漏並清理
             return self.debug_alloc.?.deinit();

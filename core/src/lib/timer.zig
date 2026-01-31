@@ -64,6 +64,9 @@ pub const CountdownTimer = struct {
     /// @param duration_ns 初始持續時間（奈秒）
     /// @return 新的 CountdownTimer 實例
     pub fn init(duration_ns: u64) CountdownTimer {
+        // 步驟：
+        // 1. 初始化欄位
+        // 2. 回傳實例
         return .{
             .internal_timer = null,
             .remaining_ns = duration_ns,
@@ -79,6 +82,9 @@ pub const CountdownTimer = struct {
     /// - running: 重置並重新開始
     /// - paused: 繼續計時
     pub fn start(self: *CountdownTimer) !void {
+        // 步驟：
+        // 1. 依狀態選擇行為
+        // 2. 更新狀態與 timer
         switch (self.state) {
             .idle, .finished => {
                 self.state = .running;
@@ -98,6 +104,10 @@ pub const CountdownTimer = struct {
     /// 暫停正在運行的計時器
     /// 如果計時器正在運行，將其狀態改為暫停並記錄剩餘時間
     pub fn pause(self: *CountdownTimer) ?void {
+        // 步驟：
+        // 1. 檢查是否 running
+        // 2. 記錄剩餘時間
+        // 3. 切換狀態
         if (self.state == .running) {
             self.remaining_ns = self.internal_timer.?.lap();
             self.state = .paused;
@@ -107,6 +117,9 @@ pub const CountdownTimer = struct {
     /// 繼續已暫停的計時器
     /// 如果計時器處於暫停狀態，將其恢復為運行狀態
     pub fn unpause(self: *CountdownTimer) !void {
+        // 步驟：
+        // 1. 檢查是否 paused
+        // 2. 重啟 timer
         if (self.state == .paused) {
             self.state = .running;
             self.internal_timer = try std.time.Timer.start();
@@ -117,6 +130,10 @@ pub const CountdownTimer = struct {
     /// 從最後一次更新開始計算經過的時間，並更新剩餘時間
     /// 如果時間已到，將剩餘時間設為 0
     pub fn update(self: *CountdownTimer) ?void {
+        // 步驟：
+        // 1. 檢查狀態
+        // 2. 計算經過時間
+        // 3. 更新剩餘時間
         if (self.state != .running) {
             return;
         }
@@ -131,6 +148,10 @@ pub const CountdownTimer = struct {
     /// @param allocator 記憶體分配器
     /// @return 格式化字串，呼叫者負責釋放
     pub fn getFormattedTime(self: *const CountdownTimer, allocator: std.mem.Allocator) ![]u8 {
+        // 步驟：
+        // 1. 換算總秒數
+        // 2. 計算分與秒
+        // 3. 格式化字串
         const total_seconds = self.remaining_ns / 1_000_000_000;
         const minutes = total_seconds / 60;
         const seconds = total_seconds % 60;
@@ -141,6 +162,10 @@ pub const CountdownTimer = struct {
     /// 若 remaining_ns <= 0，設狀態為 finished 並回傳 true
     /// @return true 若結束，false 否則
     pub fn isFinished(self: *CountdownTimer) bool {
+        // 步驟：
+        // 1. 判斷 remaining
+        // 2. 更新狀態
+        // 3. 回傳結果
         if (self.remaining_ns <= 0) {
             self.state = .finished;
             return true;
@@ -154,6 +179,10 @@ pub const CountdownTimer = struct {
     /// - 恢復剩餘時間至初始值
     /// - 清理內部計時器
     pub fn reset(self: *CountdownTimer) void {
+        // 步驟：
+        // 1. 清理 timer
+        // 2. 重設狀態
+        // 3. 恢復時間
         // 清理內部計時器
         if (self.internal_timer) |_| {
             self.internal_timer.?.reset();
