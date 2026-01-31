@@ -4,6 +4,17 @@
 
 ---
 
+## 📄 OpenSpec 變更管理 (OpenSpec Change Workflow)
+
+- **方針**：所有功能/修正都以 OpenSpec change 流程管理；避免使用獨立計劃書格式。
+- **工件產出**：依 OpenSpec 預設流程建立 change 與 artifacts（需求、設計、任務、驗證）。
+- **實作節點**：僅在 artifacts 完成且需求明確後進入實作。
+- **歸檔機制**：完成實作與驗證後，依 OpenSpec 預設規則封存 change。
+- **常用指令**：`/opsx:new`、`/opsx:ff`、`/opsx:apply`、`/opsx:archive`。
+- **語言**：使用繁體中文，技術術語保留英文。
+
+---
+
 ## 📖 文檔與知識獲取優先順序 (Documentation Priority)
 
 > [!IMPORTANT]
@@ -185,19 +196,8 @@ tty_clock_timer (單一執行檔)
 
 ---
 
-## 📄 計劃書管理 (Plan Management)
-
-- **方針**：實作功能前，必須整理計劃書並儲存到 `docs/` 目錄。
-- **檔名格式**：`integration-plan-YYYY-MM-DD-HH-MM.md`。
-- **歸檔機制**：用戶同意實作後，計劃書自動歸檔到 `docs/`。
-- **語言**：使用繁體中文，技術術語保留英文。
-
----
-
 ## 🧩 其他注意事項
 
 - `core/` 與 `tui/` 的依賴與工具鏈獨立，請勿混用指令。
-- 若新增 std API 使用，先用 `zig-std-index` 驗證。
-- 問題回報與說明一律使用繁體中文。
 
 ---
