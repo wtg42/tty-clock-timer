@@ -112,6 +112,13 @@ pub const Message = union(MessageType) {
     }
 };
 
+pub const ParseError = error{
+    MissingField,
+    InvalidFieldType,
+    InvalidMessageType,
+    InvalidMessage,
+};
+
 /// Parse JSON string into IPC Message
 /// Deserializes a JSON string into the appropriate Message union variant.
 /// Allocates memory for string fields that need to be owned.
@@ -126,21 +133,66 @@ pub fn parseMessage(allocator: std.mem.Allocator, json: []const u8) !Message {
     var parsed = try std.json.parseFromSlice(std.json.Value, allocator, json, .{});
     defer parsed.deinit();
 
+    if (parsed.value != .object) {
+        return error.InvalidMessage;
+    }
+
     const obj = parsed.value.object;
-    const type_str = obj.get("type").?.string;
+    const type_value = obj.get("type") orelse return error.MissingField;
+    const type_str = switch (type_value) {
+        .string => |value| value,
+        else => return error.InvalidFieldType,
+    };
 
     if (std.mem.eql(u8, type_str, "update_timer")) {
-        const remaining_seconds = @as(u32, @intCast(obj.get("remaining_seconds").?.integer));
-        const total_duration = @as(u32, @intCast(obj.get("total_duration").?.integer));
-        const status = try allocator.dupe(u8, obj.get("status").?.string);
+        const remaining_value = obj.get("remaining_seconds") orelse return error.MissingField;
+        const total_value = obj.get("total_duration") orelse return error.MissingField;
+        const status_value = obj.get("status") orelse return error.MissingField;
+
+        const remaining_int = switch (remaining_value) {
+            .integer => |value| value,
+            else => return error.InvalidFieldType,
+        };
+        const total_int = switch (total_value) {
+            .integer => |value| value,
+            else => return error.InvalidFieldType,
+        };
+        const status_str = switch (status_value) {
+            .string => |value| value,
+            else => return error.InvalidFieldType,
+        };
+
+        if (remaining_int < 0 or remaining_int > std.math.maxInt(u32)) {
+            return error.InvalidFieldType;
+        }
+        if (total_int < 0 or total_int > std.math.maxInt(u32)) {
+            return error.InvalidFieldType;
+        }
+
+        const remaining_seconds = @as(u32, @intCast(remaining_int));
+        const total_duration = @as(u32, @intCast(total_int));
+        const status = try allocator.dupe(u8, status_str);
         return Message{ .update_timer = .{ .remaining_seconds = remaining_seconds, .total_duration = total_duration, .status = status } };
     } else if (std.mem.eql(u8, type_str, "timer_finished")) {
-        const total_duration = @as(u32, @intCast(obj.get("total_duration").?.integer));
+        const total_value = obj.get("total_duration") orelse return error.MissingField;
+        const total_int = switch (total_value) {
+            .integer => |value| value,
+            else => return error.InvalidFieldType,
+        };
+        if (total_int < 0 or total_int > std.math.maxInt(u32)) {
+            return error.InvalidFieldType;
+        }
+        const total_duration = @as(u32, @intCast(total_int));
         return Message{ .timer_finished = .{ .total_duration = total_duration } };
     } else if (std.mem.eql(u8, type_str, "exit")) {
         return Message{ .exit = {} };
     } else if (std.mem.eql(u8, type_str, "keyboard_input")) {
-        const key = try allocator.dupe(u8, obj.get("key").?.string);
+        const key_value = obj.get("key") orelse return error.MissingField;
+        const key_str = switch (key_value) {
+            .string => |value| value,
+            else => return error.InvalidFieldType,
+        };
+        const key = try allocator.dupe(u8, key_str);
         return Message{ .keyboard_input = .{ .key = key } };
     } else {
         return error.InvalidMessageType;
@@ -265,6 +317,36 @@ test "receiveAndFilterMessage parsing" {
     try std.testing.expectEqual(@as(u32, 10), message.update_timer.remaining_seconds);
     try std.testing.expectEqual(@as(u32, 100), message.update_timer.total_duration);
     try std.testing.expectEqualStrings("running", message.update_timer.status);
+}
+
+test "parseMessage - missing type" {
+    const allocator = std.testing.allocator;
+    const json = "{\"remaining_seconds\":10}";
+    try std.testing.expectError(error.MissingField, parseMessage(allocator, json));
+}
+
+test "parseMessage - invalid type field" {
+    const allocator = std.testing.allocator;
+    const json = "{\"type\":10}";
+    try std.testing.expectError(error.InvalidFieldType, parseMessage(allocator, json));
+}
+
+test "parseMessage - unknown type" {
+    const allocator = std.testing.allocator;
+    const json = "{\"type\":\"unknown\"}";
+    try std.testing.expectError(error.InvalidMessageType, parseMessage(allocator, json));
+}
+
+test "parseMessage - missing required field" {
+    const allocator = std.testing.allocator;
+    const json = "{\"type\":\"update_timer\",\"remaining_seconds\":10,\"total_duration\":100}";
+    try std.testing.expectError(error.MissingField, parseMessage(allocator, json));
+}
+
+test "parseMessage - invalid integer range" {
+    const allocator = std.testing.allocator;
+    const json = "{\"type\":\"timer_finished\",\"total_duration\":-1}";
+    try std.testing.expectError(error.InvalidFieldType, parseMessage(allocator, json));
 }
 
 test "receiveAndFilterMessage keyboard filtering" {

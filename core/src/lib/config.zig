@@ -236,3 +236,15 @@ test "parseArgsFromSlice - invalid number" {
     const args = &[_][]const u8{ "--minutes", "abc" };
     try std.testing.expectError(ParseError.InvalidNumber, parseArgsFromSlice(args));
 }
+
+test "parseArgsFromSlice - invalid seconds number" {
+    const args = &[_][]const u8{ "--seconds", "abc" };
+    try std.testing.expectError(ParseError.InvalidNumber, parseArgsFromSlice(args));
+}
+
+test "parseArgsFromSlice - minutes overflow" {
+    const minutes_overflow = std.math.maxInt(u32) / 60 + 1;
+    const minutes_str = std.fmt.comptimePrint("{d}", .{minutes_overflow});
+    const args = &[_][]const u8{ "--minutes", minutes_str };
+    try std.testing.expectError(ParseError.Overflow, parseArgsFromSlice(args));
+}

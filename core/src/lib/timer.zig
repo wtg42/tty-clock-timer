@@ -277,6 +277,18 @@ test "start functionality" {
     try std.testing.expect(countdown_timer.internal_timer != null);
 }
 
+test "pause/unpause - no-op when not paused" {
+    var countdown_timer = CountdownTimer.init(2000000000);
+    _ = countdown_timer.pause();
+    try std.testing.expectEqual(countdown_timer.state, .idle);
+    try std.testing.expectEqual(countdown_timer.remaining_ns, 2000000000);
+    try std.testing.expect(countdown_timer.internal_timer == null);
+
+    try countdown_timer.unpause();
+    try std.testing.expectEqual(countdown_timer.state, .idle);
+    try std.testing.expect(countdown_timer.internal_timer == null);
+}
+
 test "update functionality" {
     // 測試非 running 狀態更新（idle）
     var countdown_timer = CountdownTimer.init(1000000000); // 1 秒

@@ -42,6 +42,18 @@ fn freeMessage(allocator: std.mem.Allocator, message: ipc.Message) void {
     }
 }
 
+fn configErrorMessage(err: conf.ParseError) []const u8 {
+    return switch (err) {
+        conf.ParseError.MissingArguments => "Error: Missing arguments. Usage: tty_clock_timer --minutes <num> | --seconds <num> | --help\n",
+        conf.ParseError.MissingMinutesValue => "Error: --minutes requires a numeric value\n",
+        conf.ParseError.MissingSecondsValue => "Error: --seconds requires a numeric value\n",
+        conf.ParseError.UnknownArgument => "Error: Unknown argument. Use --help for usage information\n",
+        conf.ParseError.InvalidNumber => "Error: Invalid numeric value provided\n",
+        conf.ParseError.Overflow => "Error: Numeric value too large\n",
+        conf.ParseError.OutOfMemory => "Error: Out of memory\n",
+    };
+}
+
 /// 從 stdin reader 解析輸入並判斷是否退出
 ///
 /// 步驟：
@@ -118,40 +130,8 @@ pub fn main(init: std.process.Init) !void {
     // 2. 輸出錯誤訊息
     // 3. 以錯誤碼退出
     const config = conf.parseArgs(allocator, init.minimal) catch |err| {
-        switch (err) {
-            conf.ParseError.MissingArguments => {
-                try stdout_writer.print(
-                    "Error: Missing arguments." ++
-                        " Usage: tty_clock_timer --minutes <num> | --seconds <num> | --help\n",
-                    .{},
-                );
-                try stdout_writer.flush();
-            },
-            conf.ParseError.MissingMinutesValue => {
-                try stdout_writer.print("Error: --minutes requires a numeric value\n", .{});
-                try stdout_writer.flush();
-            },
-            conf.ParseError.MissingSecondsValue => {
-                try stdout_writer.print("Error: --seconds requires a numeric value\n", .{});
-                try stdout_writer.flush();
-            },
-            conf.ParseError.UnknownArgument => {
-                try stdout_writer.print("Error: Unknown argument. Use --help for usage information\n", .{});
-                try stdout_writer.flush();
-            },
-            conf.ParseError.InvalidNumber => {
-                try stdout_writer.print("Error: Invalid numeric value provided\n", .{});
-                try stdout_writer.flush();
-            },
-            conf.ParseError.Overflow => {
-                try stdout_writer.print("Error: Numeric value too large\n", .{});
-                try stdout_writer.flush();
-            },
-            conf.ParseError.OutOfMemory => {
-                try stdout_writer.print("Error: Out of memory\n", .{});
-                try stdout_writer.flush();
-            },
-        }
+        try stdout_writer.print("{s}", .{configErrorMessage(err)});
+        try stdout_writer.flush();
         std.process.exit(1);
     };
 
@@ -240,4 +220,35 @@ pub fn main(init: std.process.Init) !void {
             std.process.exit(1);
         };
     }
+}
+
+test "configErrorMessage - mapping" {
+    try std.testing.expectEqualStrings(
+        "Error: Missing arguments. Usage: tty_clock_timer --minutes <num> | --seconds <num> | --help\n",
+        configErrorMessage(conf.ParseError.MissingArguments),
+    );
+    try std.testing.expectEqualStrings(
+        "Error: --minutes requires a numeric value\n",
+        configErrorMessage(conf.ParseError.MissingMinutesValue),
+    );
+    try std.testing.expectEqualStrings(
+        "Error: --seconds requires a numeric value\n",
+        configErrorMessage(conf.ParseError.MissingSecondsValue),
+    );
+    try std.testing.expectEqualStrings(
+        "Error: Unknown argument. Use --help for usage information\n",
+        configErrorMessage(conf.ParseError.UnknownArgument),
+    );
+    try std.testing.expectEqualStrings(
+        "Error: Invalid numeric value provided\n",
+        configErrorMessage(conf.ParseError.InvalidNumber),
+    );
+    try std.testing.expectEqualStrings(
+        "Error: Numeric value too large\n",
+        configErrorMessage(conf.ParseError.Overflow),
+    );
+    try std.testing.expectEqualStrings(
+        "Error: Out of memory\n",
+        configErrorMessage(conf.ParseError.OutOfMemory),
+    );
 }
