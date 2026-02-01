@@ -211,21 +211,25 @@ pub fn main(init: std.process.Init) !void {
                 try stderr_writer.print("Error: Failed to start UI ({s})\n", .{@errorName(err)});
                 try stderr_writer.print("UI argv[0]: {s}\n", .{ui_argv[0]});
                 var cwd_buffer: [std.fs.max_path_bytes]u8 = undefined;
-                if (std.process.getCwd(&cwd_buffer)) |cwd_path| {
-                    try stderr_writer.print("Current directory: {s}\n", .{cwd_path});
-                } else |e| {
+                const cwd_dir = Dir.cwd();
+                const cwd_len = Io.Dir.realPath(cwd_dir, io, &cwd_buffer) catch |e| {
                     try stderr_writer.print("Current directory: <unknown> ({s})\n", .{@errorName(e)});
-                }
+                    try stderr_writer.flush();
+                    return;
+                };
+                try stderr_writer.print("Current directory: {s}\n", .{cwd_buffer[0..cwd_len]});
                 try stderr_writer.flush();
             }
         } else {
             try stderr_writer.print("Error: UI directory not found\n", .{});
             var cwd_buffer: [std.fs.max_path_bytes]u8 = undefined;
-            if (std.process.getCwd(&cwd_buffer)) |cwd_path| {
-                try stderr_writer.print("Current directory: {s}\n", .{cwd_path});
-            } else |err| {
-                try stderr_writer.print("Current directory: <unknown> ({s})\n", .{@errorName(err)});
-            }
+            const cwd_dir = Dir.cwd();
+            const cwd_len = Io.Dir.realPath(cwd_dir, io, &cwd_buffer) catch |e| {
+                try stderr_writer.print("Current directory: <unknown> ({s})\n", .{@errorName(e)});
+                try stderr_writer.flush();
+                return;
+            };
+            try stderr_writer.print("Current directory: {s}\n", .{cwd_buffer[0..cwd_len]});
             try stderr_writer.print("Tried paths:\n", .{});
             for (ui_candidates) |candidate| {
                 try stderr_writer.print("  - {s}\n", .{candidate});
