@@ -7,6 +7,7 @@
 /// - 整合核心模組（timer, ui, notify - 開發中）
 const std = @import("std");
 const Io = std.Io;
+const Dir = std.Io.Dir;
 // const tty_clock_timer = @import("tty_clock_timer");
 const allocator_ctx = @import("lib/allocator.zig");
 const conf = @import("lib/config.zig");
@@ -92,7 +93,7 @@ fn handleStdinInput(allocator: std.mem.Allocator, reader: *Io.Reader) !bool {
 /// 1. 初始化記憶體分配器並偵測洩漏
 /// 2. 解析 CLI 參數，處理各種錯誤情境
 /// 3. 如果是 --help，顯示使用說明後退出
-/// 4. 啟動倒數計時器（TODO: 待實作）
+/// 4. 啟動倒數計時器並進入主迴圈（包含 IPC 更新）
 ///
 /// Returns:
 ///   - !void: 可能拋出錯誤，由 Zig runtime 處理
@@ -108,7 +109,7 @@ pub fn main(init: std.process.Init) !void {
 
     // In order to do I/O operations we must construct an `Io` instance.
     var threaded: std.Io.Threaded = .init(allocator, .{
-        .environ = std.process.Environ.empty,
+        .environ = init.minimal.environ,
     });
     defer threaded.deinit();
     const io = threaded.io();
@@ -165,6 +166,74 @@ pub fn main(init: std.process.Init) !void {
         std.process.exit(1);
     };
 
+    var ipc_writer = stdout_writer;
+    var ui_child: ?std.process.Child = null;
+    defer if (ui_child) |*child| child.kill(io);
+
+    var ui_stdin_buffer: [1024]u8 = undefined;
+    var ui_stdin_writer: Io.File.Writer = undefined;
+
+    const ui_candidates = [_][]const u8{ "tui", "../tui", "../../tui" };
+    const ui_cwd: ?[]const u8 = blk: {
+        for (ui_candidates) |candidate| {
+            if (Dir.cwd().openDir(io, candidate, .{})) |dir| {
+                dir.close(io);
+                break :blk candidate;
+            } else |_| {}
+        }
+
+        break :blk null;
+    };
+
+    if (std.process.can_spawn) {
+        if (ui_cwd) |cwd| {
+            const ui_argv = &[_][]const u8{ "bun", "run", "src/index.tsx" };
+            const child_result = std.process.spawn(io, .{
+                .argv = ui_argv,
+                .cwd = cwd,
+                .stdin = .pipe,
+                .stdout = .inherit,
+                .stderr = .inherit,
+            });
+
+            if (child_result) |child| {
+                if (child.stdin) |stdin_file| {
+                    ui_stdin_writer = .init(stdin_file, io, &ui_stdin_buffer);
+                    ipc_writer = &ui_stdin_writer.interface;
+                    ui_child = child;
+                } else {
+                    try stderr_writer.print("Error: UI stdin unavailable\n", .{});
+                    try stderr_writer.flush();
+                    var child_cleanup = child;
+                    child_cleanup.kill(io);
+                }
+            } else |err| {
+                try stderr_writer.print("Error: Failed to start UI ({s})\n", .{@errorName(err)});
+                try stderr_writer.print("UI argv[0]: {s}\n", .{ui_argv[0]});
+                var cwd_buffer: [std.fs.max_path_bytes]u8 = undefined;
+                if (std.process.getCwd(&cwd_buffer)) |cwd_path| {
+                    try stderr_writer.print("Current directory: {s}\n", .{cwd_path});
+                } else |e| {
+                    try stderr_writer.print("Current directory: <unknown> ({s})\n", .{@errorName(e)});
+                }
+                try stderr_writer.flush();
+            }
+        } else {
+            try stderr_writer.print("Error: UI directory not found\n", .{});
+            var cwd_buffer: [std.fs.max_path_bytes]u8 = undefined;
+            if (std.process.getCwd(&cwd_buffer)) |cwd_path| {
+                try stderr_writer.print("Current directory: {s}\n", .{cwd_path});
+            } else |err| {
+                try stderr_writer.print("Current directory: <unknown> ({s})\n", .{@errorName(err)});
+            }
+            try stderr_writer.print("Tried paths:\n", .{});
+            for (ui_candidates) |candidate| {
+                try stderr_writer.print("  - {s}\n", .{candidate});
+            }
+            try stderr_writer.flush();
+        }
+    }
+
     var poller = Io.poll(allocator, StdinStream, .{ .stdin = Io.File.stdin() });
     defer poller.deinit();
 
@@ -182,11 +251,12 @@ pub fn main(init: std.process.Init) !void {
         _ = try poller.pollTimeout(0);
         if (poller.reader(.stdin).bufferedLen() > 0) {
             if (try handleStdinInput(allocator, poller.reader(.stdin))) {
-                ipc.sendExit(allocator, stdout_writer) catch |err| {
+                ipc.sendExit(allocator, ipc_writer) catch |err| {
                     try stderr_writer.print("Error: Failed to send exit message ({s})\n", .{@errorName(err)});
                     try stderr_writer.flush();
                     std.process.exit(1);
                 };
+                try ipc_writer.flush();
                 return;
             }
         }
@@ -194,23 +264,26 @@ pub fn main(init: std.process.Init) !void {
         _ = countdown_timer.update();
         const finished = countdown_timer.isFinished();
         const remaining_seconds = @as(u32, @intCast(countdown_timer.remaining_ns / std.time.ns_per_s));
-        ipc.updateTimer(allocator, stdout_writer, remaining_seconds, total_duration_seconds, timerStateToStatus(countdown_timer.state)) catch |err| {
+        ipc.updateTimer(allocator, ipc_writer, remaining_seconds, total_duration_seconds, timerStateToStatus(countdown_timer.state)) catch |err| {
             try stderr_writer.print("Error: Failed to send timer update ({s})\n", .{@errorName(err)});
             try stderr_writer.flush();
             std.process.exit(1);
         };
+        try ipc_writer.flush();
 
         if (finished) {
-            ipc.notifyTimerFinished(allocator, stdout_writer, total_duration_seconds) catch |err| {
+            ipc.notifyTimerFinished(allocator, ipc_writer, total_duration_seconds) catch |err| {
                 try stderr_writer.print("Error: Failed to send timer finished message ({s})\n", .{@errorName(err)});
                 try stderr_writer.flush();
                 std.process.exit(1);
             };
-            ipc.sendExit(allocator, stdout_writer) catch |err| {
+            try ipc_writer.flush();
+            ipc.sendExit(allocator, ipc_writer) catch |err| {
                 try stderr_writer.print("Error: Failed to send exit message ({s})\n", .{@errorName(err)});
                 try stderr_writer.flush();
                 std.process.exit(1);
             };
+            try ipc_writer.flush();
             return;
         }
 

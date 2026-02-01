@@ -1,5 +1,9 @@
 schema: spec-driven
 
+context: |
+  語言：中文（繁體）
+  所有產出物必須用繁體中文撰寫。
+
 # Project context (optional)
 # This is shown to AI when creating artifacts.
 # Add your tech stack, conventions, style guides, domain knowledge, etc.
