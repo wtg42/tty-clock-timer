@@ -10,7 +10,4 @@
 - `src/lib/ipc.zig`：與 Node.js OpenTUI 進程的 IPC 通訊管理 (重構自 ui.zig)
 - `src/lib/notify.zig`：Linux desktop notification 介面
 - `src/lib/config.zig`：CLI options 與預設值定義
-- `docs/`：文件
-- `docs/PLAN.md`：PRD
-- `docs/USAGE.md`：CLI 使用範例與行為說明
 - `assets/`（可選）：字型或示意圖
