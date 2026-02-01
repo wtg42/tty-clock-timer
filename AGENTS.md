@@ -20,14 +20,20 @@
 > [!IMPORTANT]
 > **優先權衝突處理**：禁止優先搜尋網路。Zig `master` 版本變動極快，網路資訊（如 StackOverflow/舊文檔）極易過時。
 
-1.  **第一優先 (Local Source)**：必須調用本地 `zig-std-index` Skill。
+### 所有 Claude Code 實例必須遵守
+
+1.  **第一優先 (Local Source)**：當遇到任何 Zig std 查詢，**必須主動調用本地 `zig-std-index` 脚本**，不得跳過。
     - 模糊搜尋：`bash .opencode/skill/zig-std-index/scripts/search.sh <keyword>`
     - 精確讀取：`bash .opencode/skill/zig-std-index/scripts/retrieve.sh <symbol>` (例如：`std.time.Timer`)
-2.  **第二優先 (Online Reference)**：僅當本地 Skill 找不到資訊時，參考 [Zig Master Docs](https://ziglang.org/documentation/master/std/)。
-3.  **實作前驗證**：開始實作任何使用 std 函式的功能前，必須使用 zig-std-index Skill 查詢該函式是否存在及正確用法，以避免使用不存在或已變更的 API。
-    > [!NOTE]
-    > **子代理適用**：若需委派 Task 進行 Zig 相關研究，也必須在 prompt 中明確指示使用 `zig-std-index` Skill，禁止子代理自行搜索或推測。
-4.  **語言偏好**：回答與解釋請使用 **繁體中文**，技術術語（例如：Allocator, Struct, Defer）保留英文原文。
+    - **例外情境**：脚本執行失敗或返回空結果時，才參考線上資源。
+2.  **第二優先 (Online Reference)**：僅當本地脚本找不到資訊時，參考 [Zig Master Docs](https://ziglang.org/documentation/master/std/)。
+3.  **實作前驗證**：開始實作任何使用 std 函式的功能前，必須使用脚本查詢該函式是否存在及正確用法，以避免使用不存在或已變更的 API。
+4.  **禁止推測**：不得依賴知識庫記憶推測 Zig API。優先相信脚本與本地源碼結果。
+5.  **子代理指示**：若需委派 Task 進行 Zig 相關研究，在 prompt 中明確指示使用脚本：
+    > "使用以下命令查詢 Zig std 庫：
+    > bash .opencode/skill/zig-std-index/scripts/search.sh <keyword>
+    > bash .opencode/skill/zig-std-index/scripts/retrieve.sh <symbol>"
+6.  **語言偏好**：回答與解釋請使用 **繁體中文**，技術術語（例如：Allocator, Struct, Defer）保留英文原文。
 
 ---
 
@@ -36,28 +42,20 @@
 當使用 `task` 工具啟動任何類型的子代理（`general` 或 `explore`）時，**必須遵守以下規範**：
 
 ### **適用範圍**
-- **general 代理**：研究 Zig std 相關問題時強制使用 Skill
-- **explore 代理**：搜索代碼庫時若涉及 Zig API 查詢，同樣強制使用 Skill
+- **所有子代理類型**：一旦涉及 Zig std 查詢，強制使用脚本
+- **general 代理**：研究 Zig std 相關問題
+- **explore 代理**：搜索代碼庫時若涉及 Zig API 查詢
 
-### **強制使用本地 Skill**
-- **明確指示**：在委派給子代理的 prompt 中，**必須明確要求**使用 `zig-std-index` Skill
+### **強制使用本地脚本**
+- **明確指示**：在委派給子代理的 prompt 中，**必須明確要求**使用脚本
 - **禁止自行搜索**：子代理不得自行網路搜索或依賴記憶推測 Zig API
-- **正確指令範例**：
-  > "使用以下命令查詢 Zig std 庫：
-  > bash .opencode/skill/zig-std-index/scripts/search.sh <keyword>
-  > bash .opencode/skill/zig-std-index/scripts/retrieve.sh <symbol>"
+- **脚本路徑**：使用相對於專案根目錄的路徑：
+  ```bash
+  bash .opencode/skill/zig-std-index/scripts/search.sh <keyword>
+  bash .opencode/skill/zig-std-index/scripts/retrieve.sh <symbol>
+  ```
 
-### **資訊驗證機制**
-- 若子代理回報的資訊涉及 Zig API 存在性、函式簽名、結構體欄位：
-  1. **必須**使用本地 Skill 再次驗證
-  2. **或**執行 `zig build` 編譯驗證
-- **不信任原則**：對於子代理提供的 Zig API 資訊保持質疑，優先相信本地 Skill 結果
-
-### **錯誤處理**
-- 若子代理無法找到所需資訊，**不得**允許其推測或網路搜索
-- 正確做法：回報給父代理，由我直接使用 Skill 查詢或參考官方文件
-
-### **使用範例**
+### **正確指令範例**
 
 ```zig
 // ❌ 錯誤：讓子代理自行搜索
@@ -67,13 +65,62 @@ task({
     subagent_type: "explore"
 })
 
-// ✅ 正確：明確要求使用 Skill
+// ✅ 正確：明確要求使用脚本
 task({
-    description: "Search Zig std",
-    prompt: "使用 bash .opencode/skill/zig-std-index/scripts/search.sh 'fcntl' 查詢",
+    description: "Search Zig std for fcntl",
+    prompt: "使用以下命令查詢 Zig std 庫中的 fcntl：
+bash .opencode/skill/zig-std-index/scripts/search.sh 'fcntl'
+如果找到相關符號，再用 retrieve.sh 讀取完整源碼。",
     subagent_type: "explore"
 })
 ```
+
+### **資訊驗證機制**
+- 若子代理回報的資訊涉及 Zig API 存在性、函式簽名、結構體欄位：
+  1. **必須**使用脚本再次驗證
+  2. **或**執行 `zig build` 編譯驗證
+- **不信任原則**：對於子代理提供的 Zig API 資訊保持質疑，優先相信脚本與本地源碼結果
+
+### **錯誤處理**
+- 若子代理無法找到所需資訊，**不得**允許其推測或網路搜索
+- 正確做法：回報給父代理，由我直接使用脚本查詢或參考官方文件
+
+---
+
+## 🧑‍💻 主 Claude Code 實例的 Zig 查詢工作流
+
+**原則**：當遇到任何 Zig std 問題或需要驗證 API 時，主動使用脚本，不要跳過。
+
+### 工作流
+
+1. **遇到 Zig std 問題**
+   - 例：「如何使用 `std.time.Timer`？」
+   - 例：「`std.fs.Dir.openDir` 的簽名是什麼？」
+
+2. **主動執行搜尋**
+   ```bash
+   bash .opencode/skill/zig-std-index/scripts/search.sh Timer
+   ```
+
+3. **根據搜尋結果精確讀取**
+   ```bash
+   bash .opencode/skill/zig-std-index/scripts/retrieve.sh std.time.Timer
+   ```
+
+4. **分析源碼和文檔註解**
+   - 讀取返回的源碼
+   - 查看 `///` 開頭的文檔註解
+   - 驗證函式簽名、參數、返回值
+
+5. **回答用戶或進行實作**
+   - 基於實際源碼而非推測回答
+   - 開始實作前再次驗證 API 變更
+
+### 不遵守後果
+
+- **推測 API**：導致實作錯誤、編譯失敗
+- **依賴舊知識**：使用已廢棄或變更的 API
+- **浪費時間**：反復修正編譯錯誤
 
 ---
 
