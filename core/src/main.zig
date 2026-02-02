@@ -246,6 +246,8 @@ pub fn main(init: std.process.Init) !void {
         .raw = Io.Duration.fromSeconds(1),
     };
 
+    var timer_finished_notified = false;
+
     // 主循環
     // 步驟：
     // 1. 輪詢 stdin
@@ -267,28 +269,28 @@ pub fn main(init: std.process.Init) !void {
 
         _ = countdown_timer.update();
         const finished = countdown_timer.isFinished();
-        const remaining_seconds = @as(u32, @intCast(countdown_timer.remaining_ns / std.time.ns_per_s));
-        ipc.updateTimer(allocator, ipc_writer, remaining_seconds, total_duration_seconds, timerStateToStatus(countdown_timer.state)) catch |err| {
-            try stderr_writer.print("Error: Failed to send timer update ({s})\n", .{@errorName(err)});
-            try stderr_writer.flush();
-            std.process.exit(1);
-        };
-        try ipc_writer.flush();
 
         if (finished) {
-            ipc.notifyTimerFinished(allocator, ipc_writer, total_duration_seconds) catch |err| {
-                try stderr_writer.print("Error: Failed to send timer finished message ({s})\n", .{@errorName(err)});
+            // Send timer_finished notification only once
+            if (!timer_finished_notified) {
+                ipc.notifyTimerFinished(allocator, ipc_writer, total_duration_seconds) catch |err| {
+                    try stderr_writer.print("Error: Failed to send timer finished message ({s})\n", .{@errorName(err)});
+                    try stderr_writer.flush();
+                    std.process.exit(1);
+                };
+                try ipc_writer.flush();
+                timer_finished_notified = true;
+            }
+            // Continue loop to handle user input, don't send update_timer or exit
+        } else {
+            // Only send update_timer when not finished
+            const remaining_seconds = @as(u32, @intCast(countdown_timer.remaining_ns / std.time.ns_per_s));
+            ipc.updateTimer(allocator, ipc_writer, remaining_seconds, total_duration_seconds, timerStateToStatus(countdown_timer.state)) catch |err| {
+                try stderr_writer.print("Error: Failed to send timer update ({s})\n", .{@errorName(err)});
                 try stderr_writer.flush();
                 std.process.exit(1);
             };
             try ipc_writer.flush();
-            ipc.sendExit(allocator, ipc_writer) catch |err| {
-                try stderr_writer.print("Error: Failed to send exit message ({s})\n", .{@errorName(err)});
-                try stderr_writer.flush();
-                std.process.exit(1);
-            };
-            try ipc_writer.flush();
-            return;
         }
 
         Io.Clock.Duration.sleep(tick_duration, io) catch |err| {
