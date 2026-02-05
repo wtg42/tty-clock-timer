@@ -14,8 +14,6 @@ const conf = @import("lib/config.zig");
 const ipc = @import("lib/ipc.zig");
 const timer_mod = @import("lib/timer.zig");
 
-const StdinStream = enum { stdin };
-
 /// 將 TimerState 對應到 IPC status 字串
 ///
 /// 步驟：
@@ -61,12 +59,18 @@ fn configErrorMessage(err: conf.ParseError) []const u8 {
 /// 1. 讀取 buffered 資料並找換行
 /// 2. 解析為鍵盤訊息或 JSON
 /// 3. 判斷是否觸發退出
-fn handleStdinInput(allocator: std.mem.Allocator, reader: *Io.Reader) !bool {
+fn handleStdinInput(allocator: std.mem.Allocator, reader: *Io.Reader, stdin_is_tty: bool) !bool {
     while (true) {
         const buffered = reader.buffered();
         if (buffered.len == 0) return false;
 
-        const newline_index = std.mem.findScalarPos(u8, buffered, 0, '\n') orelse return false;
+        const newline_index = std.mem.findScalarPos(u8, buffered, 0, '\n') orelse {
+            if (stdin_is_tty and buffered[0] == 'q') {
+                reader.toss(1);
+                return true;
+            }
+            return false;
+        };
         const line = buffered[0..newline_index];
         reader.toss(newline_index + 1);
 
@@ -124,6 +128,35 @@ pub fn main(init: std.process.Init) !void {
     var stderr_buffer: [1024]u8 = undefined;
     var stderr_file_writer: Io.File.Writer = .init(.stderr(), io, &stderr_buffer);
     const stderr_writer = &stderr_file_writer.interface;
+
+    var original_termios: ?std.posix.termios = null;
+    const stdin_handle = Io.File.stdin().handle;
+    const stdin_termios = std.posix.tcgetattr(stdin_handle) catch |err| switch (err) {
+        error.NotATerminal => null,
+        else => {
+            try stderr_writer.print("Error: Failed to read stdin settings ({s})\n", .{@errorName(err)});
+            try stderr_writer.flush();
+            std.process.exit(1);
+        },
+    };
+    if (stdin_termios) |current| {
+        var raw = current;
+        raw.lflag.ECHO = false;
+        raw.lflag.ICANON = false;
+        std.posix.tcsetattr(stdin_handle, .NOW, raw) catch |err| {
+            try stderr_writer.print("Error: Failed to set stdin settings ({s})\n", .{@errorName(err)});
+            try stderr_writer.flush();
+            std.process.exit(1);
+        };
+        original_termios = current;
+    }
+    const stdin_is_tty = stdin_termios != null;
+    defer if (original_termios) |saved| {
+        std.posix.tcsetattr(stdin_handle, .NOW, saved) catch |err| {
+            stderr_writer.print("Error: Failed to restore stdin settings ({s})\n", .{@errorName(err)}) catch {};
+            stderr_writer.flush() catch {};
+        };
+    };
 
     // 解析 CLI 參數，使用 catch 處理可能的錯誤
     // 步驟：
@@ -190,7 +223,7 @@ pub fn main(init: std.process.Init) !void {
             const ui_argv = &[_][]const u8{ "bun", "run", "src/index.tsx" };
             const child_result = std.process.spawn(io, .{
                 .argv = ui_argv,
-                .cwd = cwd,
+                .cwd = .{ .path = cwd },
                 .stdin = .pipe,
                 .stdout = .inherit,
                 .stderr = .inherit,
@@ -238,8 +271,13 @@ pub fn main(init: std.process.Init) !void {
         }
     }
 
-    var poller = Io.poll(allocator, StdinStream, .{ .stdin = Io.File.stdin() });
-    defer poller.deinit();
+    var stdin_buffer: [1024]u8 = undefined;
+    var stdin_reader: Io.File.Reader = .initStreaming(.stdin(), io, &stdin_buffer);
+    var stdin_pollfds = [_]std.posix.pollfd{.{
+        .fd = Io.File.stdin().handle,
+        .events = std.posix.POLL.IN,
+        .revents = 0,
+    }};
 
     const tick_duration = Io.Clock.Duration{
         .clock = .awake,
@@ -254,9 +292,23 @@ pub fn main(init: std.process.Init) !void {
     // 2. 更新 timer 並送 IPC
     // 3. sleep 1 秒
     while (true) {
-        _ = try poller.pollTimeout(0);
-        if (poller.reader(.stdin).bufferedLen() > 0) {
-            if (try handleStdinInput(allocator, poller.reader(.stdin))) {
+        const poll_ready = std.posix.poll(stdin_pollfds[0..], 0) catch |err| {
+            try stderr_writer.print("Error: Failed to poll stdin ({s})\n", .{@errorName(err)});
+            try stderr_writer.flush();
+            std.process.exit(1);
+        };
+        if (poll_ready > 0 and (stdin_pollfds[0].revents & std.posix.POLL.IN) != 0) {
+            stdin_reader.interface.fillMore() catch |err| switch (err) {
+                error.EndOfStream => {},
+                error.ReadFailed => {
+                    try stderr_writer.print("Error: Failed to read stdin ({s})\n", .{@errorName(err)});
+                    try stderr_writer.flush();
+                    std.process.exit(1);
+                },
+            };
+        }
+        if (stdin_reader.interface.bufferedLen() > 0) {
+            if (try handleStdinInput(allocator, &stdin_reader.interface, stdin_is_tty)) {
                 ipc.sendExit(allocator, ipc_writer) catch |err| {
                     try stderr_writer.print("Error: Failed to send exit message ({s})\n", .{@errorName(err)});
                     try stderr_writer.flush();
