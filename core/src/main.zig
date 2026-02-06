@@ -193,7 +193,7 @@ pub fn main(init: std.process.Init) !void {
     const total_duration_ns = @as(u64, total_duration_seconds) * std.time.ns_per_s;
 
     var countdown_timer = timer_mod.CountdownTimer.init(total_duration_ns);
-    countdown_timer.start() catch |err| {
+    countdown_timer.start(io) catch |err| {
         try stderr_writer.print("Error: Failed to start timer ({s})\n", .{@errorName(err)});
         try stderr_writer.flush();
         std.process.exit(1);
@@ -319,7 +319,7 @@ pub fn main(init: std.process.Init) !void {
             }
         }
 
-        _ = countdown_timer.update();
+        countdown_timer.update(io);
         const finished = countdown_timer.isFinished();
 
         if (finished) {
