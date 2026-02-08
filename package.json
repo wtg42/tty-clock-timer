@@ -1,0 +1,19 @@
+{
+  "name": "tty-clock-timer",
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "build": "cd core && zig build && cd ..",
+    "server": "bun run server/index.ts",
+    "server:dev": "bun --watch server/index.ts",
+    "tui": "bun run tui-client/src/index.tsx",
+    "dev": "bun run tui/src/index.tsx"
+  },
+  "dependencies": {
+    "@opentui/core": "latest",
+    "solid-js": "latest"
+  },
+  "devDependencies": {
+    "bun-types": "latest"
+  }
+}

@@ -4,13 +4,25 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-**tty-clock-timer** is a terminal-based countdown timer application with a terminal UI (TUI). It combines:
-- **Core** (Zig): CLI entry point, argument parsing, timer logic, IPC communication with the UI process
-- **TUI** (TypeScript/Solid): Visual display using OpenTUI framework
+**tty-clock-timer** is a terminal-based countdown timer application using a modern HTTP/SSE architecture. It consists of three components:
+- **Server** (Bun): HTTP/REST API server with Server-Sent Events (SSE) for broadcasting timer updates
+- **Core** (Zig): High-precision countdown timer engine running as a child process of the Server
+- **TUI** (TypeScript/Solid): Terminal UI client that connects to the Server via HTTP/EventSource
 
-The architecture uses IPC (inter-process communication) to send timer updates from the Zig core to the Node.js-based OpenTUI UI via JSON messages over stdout/stdin.
+The architecture separates concerns: the Server manages timer state and coordinates communication, Core handles high-precision timing, and TUI is a thin client displaying updates and handling keyboard input.
 
 ## Build & Run Commands
+
+### Quick Start
+
+```bash
+# Terminal 1: Build Core and start Server
+cd core && zig build && cd ..
+PORT=8080 bun run server
+
+# Terminal 2: Start TUI client (connects to Server on port 8080)
+bun run tui
+```
 
 ### Core (Zig)
 
@@ -19,10 +31,6 @@ All commands execute from `core/` directory:
 ```bash
 # Build executable
 zig build
-
-# Run with arguments
-zig build run -- --minutes 25
-zig build run -- -s 90
 
 # Run all tests (both library and executable)
 zig build test
@@ -34,47 +42,82 @@ zig test core/src/lib/config.zig --test-filter "parseArgsFromSlice"
 zig fmt core/src/*.zig core/src/lib/*.zig
 ```
 
-### TUI (OpenTUI)
+Note: Core is spawned by the Server, not run directly as a CLI tool.
 
-Execute from `tui/` directory:
+### Server (Bun)
+
+Execute from project root:
 
 ```bash
-# Development mode (with watch)
-bun run dev
+# Start HTTP server (spawns Core process, listens on port 8080)
+bun run server
 
-# Install dependencies
-bun install
+# Custom port
+PORT=3000 bun run server
+
+# Development mode (with watch)
+bun run server:dev
+```
+
+### TUI Client (Bun/TypeScript)
+
+Execute from project root:
+
+```bash
+# Start TUI client (connects to Server at http://localhost:8080)
+bun run tui
+
+# Custom server URL
+SERVER_URL=http://localhost:3000 bun run tui
 ```
 
 ## Architecture & Module Structure
 
+### Server (Bun/TypeScript)
+
+- **`server/index.ts`**: HTTP server entry point. Initializes Bun.serve on configurable PORT (default 8080), spawns Core process, sets up graceful shutdown (SIGINT/SIGTERM), manages Core process lifecycle.
+
+- **`server/routes.ts`**: REST API route handlers. Implements endpoints: `GET /status`, `GET /events` (SSE), `POST /start`, `POST /pause`, `POST /resume`, `POST /reset`, `POST /stop`. Validates requests and forwards commands to Core via `sendCommandToCore()`.
+
+- **`server/timer-manager.ts`**: Core process lifecycle management. Spawns Core via `Bun.spawn()`, reads Core stdout (JSON messages), parses IPC messages (update_timer, timer_finished, exit), broadcasts updates via SSE.
+
+- **`server/sse.ts`**: Server-Sent Events handler. Manages SSE client connections, broadcasts timer updates to all connected clients, handles client disconnection cleanup, sends keep-alive comments every 30 seconds.
+
+- **`server/state.ts`**: Global timer state (single shared instance). Exports `timerState` object (status, remaining_seconds, total_duration, elapsed_seconds) and update functions. All clients observe the same timer.
+
 ### Core (Zig)
 
-- **`core/src/main.zig`**: CLI entry point. Initializes I/O context, parses CLI arguments via `config` module, manages the main event loop (polling stdin, updating timer, sending IPC messages). Uses `std.process.Init` to receive pre-initialized I/O from Zig 0.16 runtime.
-
-- **`core/src/root.zig`**: Library public API (re-exports for external consumers).
+- **`core/src/main.zig`**: Timer process entry point. Runs in headless mode, reads JSON commands from stdin (`{"cmd": "start", "duration": N}`), updates timer, sends JSON messages to stdout (update_timer, timer_finished). Uses `std.process.Init` for I/O context.
 
 - **`core/src/lib/config.zig`**: CLI argument parsing (`--minutes`, `--seconds`, `--help`). Returns `ParseError` union type on failure.
 
-- **`core/src/lib/timer.zig`**: Core countdown timer with state machine (idle → running → paused → finished). Uses `std.time.Timer` for high-precision timing. Provides `CountdownTimer` struct with methods: `init()`, `start()`, `update()`, `isFinished()`, `reset()`, `getFormattedTime()`.
+- **`core/src/lib/timer.zig`**: Core countdown timer with state machine (idle → running → paused → finished). Uses `std.time.Timer` for high-precision timing.
 
-- **`core/src/lib/allocator.zig`**: Unified memory context with leak detection (Debug mode only). Provides `AllocatorCtx.init()` and `deinit()` with leak checking.
+- **`core/src/lib/ipc.zig`**: JSON-based IPC protocol. Defines `Message` union (update_timer, timer_finished, exit, keyboard_input). All messages include explicit "type" field.
 
-- **`core/src/lib/ipc.zig`**: JSON-based IPC protocol. Defines `Message` union (update_timer, timer_finished, exit, keyboard_input). Provides functions: `updateTimer()`, `notifyTimerFinished()`, `sendExit()`, `handleKeyboardInput()`, `parseMessage()`. All messages include a JSON "type" field.
+### TUI Client (TypeScript/Solid/OpenTUI)
 
-### TUI (OpenTUI)
-
-- **`tui/src/index.tsx`**: Entry point for OpenTUI. Receives JSON messages from stdin (timer updates), parses and filters messages, updates Solid.js signals (`remainingSeconds`, `timerStatus`). Renders via OpenTUI's `<box>`, `<text>`, `<ascii_font>` JSX components.
+- **`tui-client/src/index.tsx`**: HTTP client entry point. Connects to Server via `EventSource` to `/events` endpoint, receives SSE messages, updates Solid.js signals. Handles keyboard input (TTY raw mode), sends HTTP POST requests to control timer (`/start`, `/pause`, `/resume`, `/reset`, `/stop`). Renders via OpenTUI components.
 
 ## Key Design Patterns
 
-### IPC Communication
+### HTTP/SSE Communication
 
-Timer updates flow: `main.zig` → JSON serialization → stdout → `index.tsx` stdin → state update → render
+Timer updates flow:
+1. Server spawns Core process via `Bun.spawn()`
+2. Core reads commands from stdin: `{"cmd": "start", "duration": 300}`
+3. Core sends updates to stdout: `{"type": "update_timer", ...}`
+4. Server parses Core messages and broadcasts via SSE to all clients
+5. TUI clients receive updates via EventSource, update UI reactively
 
-Messages are JSON objects with explicit "type" field:
+SSE message format (sent by Server to clients):
 ```json
 {"type": "update_timer", "remaining_seconds": 120, "total_duration": 300, "status": "running"}
+```
+
+Core command format (sent by Server to Core stdin):
+```json
+{"cmd": "start", "duration": 300}
 ```
 
 ### Error Handling
@@ -126,15 +169,20 @@ Per `AGENTS.md`:
 
 ### Process Architecture
 
-- **Core spawns TUI**: Main (`main.zig`) spawns child process (bun + OpenTUI) with stdin pipe.
-- **Graceful shutdown**: On timer finish or user quit ('q'), send exit message and close pipes.
-- **IPC format**: Newline-delimited JSON on stdout/stdin.
+- **Server spawns Core**: Server is the main process, spawns Core as child with stdin/stdout pipes.
+- **TUI is independent client**: TUI connects to Server via HTTP, not a child process.
+- **Graceful shutdown**: Server handles SIGINT/SIGTERM, sends exit command to Core, closes SSE connections.
+- **Multi-client support**: Multiple TUI instances can connect to the same Server (read-only via SSE, commands via REST API).
+- **Command JSON format**: Newline-delimited JSON on Core stdin/stdout.
+- **SSE format**: Newline-delimited JSON on HTTP response body.
 
 ### Debugging
 
-- **Core errors**: Check stderr messages (I/O, timer start, IPC failures).
-- **TUI not found**: Check stdout for "Error: UI directory not found" and tried paths.
+- **Server errors**: Check console output from `bun run server` (port conflicts, Core path issues).
+- **Core crashes**: Server detects via `coreProcess.exited`, broadcasts error event to all SSE clients.
+- **TUI connection errors**: Check if Server is running on expected port (`lsof -i :8080`).
 - **Memory leaks** (Debug): `main.zig` deinit panics if leaks detected.
+- **Test API**: `curl -s http://localhost:8080/status | jq .`
 
 ## OpenSpec Workflow
 

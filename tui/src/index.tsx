@@ -3,23 +3,26 @@ import { render } from "@opentui/solid";
 import { createSignal, onMount } from "solid-js";
 import { useTimeline } from "@opentui/solid";
 
-type TimerUpdateMessage = {
+const SERVER_URL = process.env.SERVER_URL || "http://localhost:8080";
+
+type SSEUpdateMessage = {
   type: "update_timer";
   remaining_seconds: number;
   total_duration: number;
   status: string;
 };
 
-type TimerFinishedMessage = {
+type SSEFinishedMessage = {
   type: "timer_finished";
   total_duration: number;
 };
 
-const [remainingSeconds, setRemainingSeconds] = createSignal<number | null>(null);
-const [timerStatus, setTimerStatus] = createSignal<string>("idle");
-const [isFinished, setIsFinished] = createSignal<boolean>(false);
+type SSEErrorMessage = {
+  type: "error";
+  message: string;
+};
 
-const isTimerUpdateMessage = (value: unknown): value is TimerUpdateMessage => {
+const isSSEUpdateMessage = (value: unknown): value is SSEUpdateMessage => {
   if (!value || typeof value !== "object") return false;
   const record = value as Record<string, unknown>;
   return (
@@ -30,7 +33,7 @@ const isTimerUpdateMessage = (value: unknown): value is TimerUpdateMessage => {
   );
 };
 
-const isTimerFinishedMessage = (value: unknown): value is TimerFinishedMessage => {
+const isSSEFinishedMessage = (value: unknown): value is SSEFinishedMessage => {
   if (!value || typeof value !== "object") return false;
   const record = value as Record<string, unknown>;
   return (
@@ -39,6 +42,20 @@ const isTimerFinishedMessage = (value: unknown): value is TimerFinishedMessage =
   );
 };
 
+const isSSEErrorMessage = (value: unknown): value is SSEErrorMessage => {
+  if (!value || typeof value !== "object") return false;
+  const record = value as Record<string, unknown>;
+  return (
+    record.type === "error" &&
+    typeof record.message === "string"
+  );
+};
+
+const [remainingSeconds, setRemainingSeconds] = createSignal<number | null>(null);
+const [timerStatus, setTimerStatus] = createSignal<string>("idle");
+const [isFinished, setIsFinished] = createSignal<boolean>(false);
+const [connectionError, setConnectionError] = createSignal<string | null>(null);
+
 const formatRemaining = (seconds: number | null) => {
   if (seconds === null) return "--:--";
   const minutes = Math.floor(seconds / 60);
@@ -46,8 +63,8 @@ const formatRemaining = (seconds: number | null) => {
   return `${minutes.toString().padStart(2, "0")}:${remaining.toString().padStart(2, "0")}`;
 };
 
-const handleLine = (line: string) => {
-  const trimmed = line.trim();
+const handleSSEMessage = (data: string) => {
+  const trimmed = data.trim();
   if (!trimmed) return;
   let parsed: unknown;
   try {
@@ -55,26 +72,73 @@ const handleLine = (line: string) => {
   } catch {
     return;
   }
-  if (isTimerUpdateMessage(parsed)) {
+  if (isSSEUpdateMessage(parsed)) {
     setRemainingSeconds(parsed.remaining_seconds);
     setTimerStatus(parsed.status);
-  } else if (isTimerFinishedMessage(parsed)) {
+    setConnectionError(null);
+  } else if (isSSEFinishedMessage(parsed)) {
     setIsFinished(true);
+    setConnectionError(null);
+  } else if (isSSEErrorMessage(parsed)) {
+    setConnectionError(parsed.message);
   }
 };
 
-let stdinBuffer = "";
-process.stdin.setEncoding("utf8");
-process.stdin.on("data", (chunk) => {
-  stdinBuffer += chunk;
-  let newlineIndex = stdinBuffer.indexOf("\n");
-  while (newlineIndex >= 0) {
-    const line = stdinBuffer.slice(0, newlineIndex);
-    stdinBuffer = stdinBuffer.slice(newlineIndex + 1);
-    handleLine(line);
-    newlineIndex = stdinBuffer.indexOf("\n");
+// Setup keyboard input handling
+const setupKeyboardInput = () => {
+  process.stdin.setRawMode(true);
+  process.stdin.setEncoding("utf8");
+
+  process.stdin.on("data", async (chunk) => {
+    const key = chunk.toString();
+    if (key === "q" || key === "Q") {
+      try {
+        await fetch(`${SERVER_URL}/stop`, { method: "POST" });
+      } catch {
+        // Ignore errors, just exit
+      }
+      process.exit(0);
+    } else if (key === " ") {
+      // Pause/resume
+      try {
+        if (timerStatus() === "running") {
+          await fetch(`${SERVER_URL}/pause`, { method: "POST" });
+        } else if (timerStatus() === "paused") {
+          await fetch(`${SERVER_URL}/resume`, { method: "POST" });
+        }
+      } catch {
+        // Ignore errors
+      }
+    }
+  });
+};
+
+// Setup SSE connection
+const setupSSEConnection = () => {
+  try {
+    const eventSource = new EventSource(`${SERVER_URL}/events`);
+
+    eventSource.addEventListener("message", (event) => {
+      handleSSEMessage(event.data);
+    });
+
+    eventSource.addEventListener("error", () => {
+      setConnectionError("Server connection lost");
+      eventSource.close();
+      // Attempt reconnect after delay
+      setTimeout(setupSSEConnection, 1000);
+    });
+
+    eventSource.addEventListener("open", () => {
+      setConnectionError(null);
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Connection failed";
+    setConnectionError(message);
+    // Retry after delay
+    setTimeout(setupSSEConnection, 1000);
   }
-});
+};
 
 // Timer finished celebration view with animations
 const FinishedView = () => {
@@ -131,13 +195,28 @@ const FinishedView = () => {
   );
 };
 
-// OpenTUI 入口渲染
-// 步驟：
-// 1. 建立版面容器
-// 2. 根據完成狀態顯示不同內容
+// Error view
+const ErrorView = () => {
+  return (
+    <box flexDirection="column" alignItems="center" justifyContent="center">
+      <text attributes={TextAttributes.BOLD}>{connectionError()}</text>
+      <text attributes={TextAttributes.DIM}>Attempting to reconnect...</text>
+    </box>
+  );
+};
+
+// Initialize on mount
+onMount(() => {
+  setupSSEConnection();
+  setupKeyboardInput();
+});
+
+// OpenTUI rendering
 render(() => (
   <box alignItems="center" justifyContent="center" flexGrow={1}>
-    {!isFinished() ? (
+    {connectionError() ? (
+      <ErrorView />
+    ) : !isFinished() ? (
       <box justifyContent="center" alignItems="center" flexDirection="column">
         <ascii_font font="tiny" text="TTY Clock Timer" />
         <text attributes={TextAttributes.BOLD}>{formatRemaining(remainingSeconds())}</text>

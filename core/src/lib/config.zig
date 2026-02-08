@@ -99,8 +99,10 @@ pub fn parseArgsFromSlice(args: []const []const u8) !Config {
         .show_help = false,
     };
 
+    // Headless mode: no CLI arguments provided
+    // Core will wait for commands from stdin (e.g., Server-based architecture)
     if (args.len == 0) {
-        return ParseError.MissingArguments;
+        return config;
     }
 
     const first_arg = args[0];

@@ -54,12 +54,14 @@ fn configErrorMessage(err: conf.ParseError) []const u8 {
 }
 
 /// 從 stdin reader 解析輸入並判斷是否退出
+/// 同時支援 JSON 命令（用於 Server-based 架構）和鍵盤輸入（用於 TTY 模式）
 ///
 /// 步驟：
 /// 1. 讀取 buffered 資料並找換行
-/// 2. 解析為鍵盤訊息或 JSON
-/// 3. 判斷是否觸發退出
-fn handleStdinInput(allocator: std.mem.Allocator, reader: *Io.Reader, stdin_is_tty: bool) !bool {
+/// 2. 嘗試解析為 JSON 命令（start, pause, resume, reset, exit）
+/// 3. 如果不是 JSON，則解析為鍵盤訊息或 IPC 訊息
+/// 4. 判斷是否觸發退出
+fn handleStdinInput(allocator: std.mem.Allocator, reader: *Io.Reader, stdin_is_tty: bool, io: std.Io, countdown_timer: *?timer_mod.CountdownTimer, total_duration_seconds: *u32, timer_started: *bool) !bool {
     while (true) {
         const buffered = reader.buffered();
         if (buffered.len == 0) return false;
@@ -79,6 +81,39 @@ fn handleStdinInput(allocator: std.mem.Allocator, reader: *Io.Reader, stdin_is_t
 
         if (std.mem.eql(u8, trimmed, "q")) return true;
 
+        // Try to parse as JSON command first (for Server-based architecture)
+        if (std.mem.startsWith(u8, trimmed, "{")) {
+            if ((parseJsonCommand(allocator, trimmed) catch null)) |cmd| {
+                defer allocator.free(cmd.cmd);
+
+                if (std.mem.eql(u8, cmd.cmd, "start")) {
+                    if (cmd.duration) |duration| {
+                        const duration_ns = @as(u64, duration) * std.time.ns_per_s;
+                        countdown_timer.* = timer_mod.CountdownTimer.init(duration_ns);
+                        total_duration_seconds.* = duration;
+                        countdown_timer.*.?.start(io) catch {};
+                        timer_started.* = true;
+                    }
+                } else if (std.mem.eql(u8, cmd.cmd, "pause")) {
+                    if (countdown_timer.*) |*timer| {
+                        timer.pause(io);
+                    }
+                } else if (std.mem.eql(u8, cmd.cmd, "resume")) {
+                    if (countdown_timer.*) |*timer| {
+                        timer.start(io) catch {};
+                    }
+                } else if (std.mem.eql(u8, cmd.cmd, "reset")) {
+                    countdown_timer.* = null;
+                    timer_started.* = false;
+                    total_duration_seconds.* = 0;
+                } else if (std.mem.eql(u8, cmd.cmd, "exit")) {
+                    return true;
+                }
+                continue;
+            }
+            // Not a valid command, try IPC message
+        }
+
         const parsed = ipc.parseMessage(allocator, trimmed) catch |err| {
             if (err == error.OutOfMemory) return err;
             continue;
@@ -89,6 +124,46 @@ fn handleStdinInput(allocator: std.mem.Allocator, reader: *Io.Reader, stdin_is_t
             else => {},
         }
     }
+}
+
+/// Command structure for parsed JSON commands
+const JsonCommand = struct {
+    cmd: []const u8,
+    duration: ?u32 = null,
+};
+
+/// Parse JSON command from Server
+/// Supports: start, pause, resume, reset, exit
+fn parseJsonCommand(allocator: std.mem.Allocator, json: []const u8) !?JsonCommand {
+    var parsed = try std.json.parseFromSlice(std.json.Value, allocator, json, .{});
+    defer parsed.deinit();
+
+    if (parsed.value != .object) {
+        return null;
+    }
+
+    const obj = parsed.value.object;
+    const cmd_value = obj.get("cmd") orelse return null;
+    const cmd_str_original = switch (cmd_value) {
+        .string => |value| value,
+        else => return null,
+    };
+
+    // Copy the command string since the JSON will be freed
+    const cmd_str = try allocator.dupe(u8, cmd_str_original);
+    errdefer allocator.free(cmd_str);
+
+    var duration: ?u32 = null;
+    if (obj.get("duration")) |dur_value| {
+        if (dur_value == .integer) {
+            duration = @intCast(dur_value.integer);
+        }
+    }
+
+    return JsonCommand{
+        .cmd = cmd_str,
+        .duration = duration,
+    };
 }
 
 /// 程式主入口點
@@ -189,15 +264,28 @@ pub fn main(init: std.process.Init) !void {
         return;
     }
 
-    const total_duration_seconds = config.duration_seconds;
-    const total_duration_ns = @as(u64, total_duration_seconds) * std.time.ns_per_s;
+    // Support headless mode: if no duration provided, wait for start command from stdin
+    var total_duration_seconds = config.duration_seconds;
 
-    var countdown_timer = timer_mod.CountdownTimer.init(total_duration_ns);
-    countdown_timer.start(io) catch |err| {
-        try stderr_writer.print("Error: Failed to start timer ({s})\n", .{@errorName(err)});
+    // In headless mode, don't start timer immediately
+    // Timer will be started when receiving a start command via stdin
+    var countdown_timer: ?timer_mod.CountdownTimer = null;
+    var timer_started = false;
+
+    if (total_duration_seconds > 0) {
+        const total_duration_ns = @as(u64, total_duration_seconds) * std.time.ns_per_s;
+        countdown_timer = timer_mod.CountdownTimer.init(total_duration_ns);
+        countdown_timer.?.start(io) catch |err| {
+            try stderr_writer.print("Error: Failed to start timer ({s})\n", .{@errorName(err)});
+            try stderr_writer.flush();
+            std.process.exit(1);
+        };
+        timer_started = true;
+    } else {
+        // Headless mode: waiting for commands
+        try stderr_writer.print("Info: Headless mode - waiting for start command\n", .{});
         try stderr_writer.flush();
-        std.process.exit(1);
-    };
+    }
 
     var ipc_writer = stdout_writer;
     var ui_child: ?std.process.Child = null;
@@ -241,32 +329,14 @@ pub fn main(init: std.process.Init) !void {
                     child_cleanup.kill(io);
                 }
             } else |err| {
-                try stderr_writer.print("Error: Failed to start UI ({s})\n", .{@errorName(err)});
-                try stderr_writer.print("UI argv[0]: {s}\n", .{ui_argv[0]});
-                var cwd_buffer: [std.fs.max_path_bytes]u8 = undefined;
-                const cwd_dir = Dir.cwd();
-                const cwd_len = Io.Dir.realPath(cwd_dir, io, &cwd_buffer) catch |e| {
-                    try stderr_writer.print("Current directory: <unknown> ({s})\n", .{@errorName(e)});
-                    try stderr_writer.flush();
-                    return;
-                };
-                try stderr_writer.print("Current directory: {s}\n", .{cwd_buffer[0..cwd_len]});
+                // Failed to start UI - continue in headless mode
+                try stderr_writer.print("Info: Failed to start UI ({s}), continuing in headless mode\n", .{@errorName(err)});
                 try stderr_writer.flush();
             }
         } else {
-            try stderr_writer.print("Error: UI directory not found\n", .{});
-            var cwd_buffer: [std.fs.max_path_bytes]u8 = undefined;
-            const cwd_dir = Dir.cwd();
-            const cwd_len = Io.Dir.realPath(cwd_dir, io, &cwd_buffer) catch |e| {
-                try stderr_writer.print("Current directory: <unknown> ({s})\n", .{@errorName(e)});
-                try stderr_writer.flush();
-                return;
-            };
-            try stderr_writer.print("Current directory: {s}\n", .{cwd_buffer[0..cwd_len]});
-            try stderr_writer.print("Tried paths:\n", .{});
-            for (ui_candidates) |candidate| {
-                try stderr_writer.print("  - {s}\n", .{candidate});
-            }
+            // UI directory not found - running in headless mode (Server-based architecture)
+            // Continue without spawning UI, output directly to stdout
+            try stderr_writer.print("Info: UI directory not found, running in headless mode\n", .{});
             try stderr_writer.flush();
         }
     }
@@ -308,7 +378,7 @@ pub fn main(init: std.process.Init) !void {
             };
         }
         if (stdin_reader.interface.bufferedLen() > 0) {
-            if (try handleStdinInput(allocator, &stdin_reader.interface, stdin_is_tty)) {
+            if (try handleStdinInput(allocator, &stdin_reader.interface, stdin_is_tty, io, &countdown_timer, &total_duration_seconds, &timer_started)) {
                 ipc.sendExit(allocator, ipc_writer) catch |err| {
                     try stderr_writer.print("Error: Failed to send exit message ({s})\n", .{@errorName(err)});
                     try stderr_writer.flush();
@@ -319,30 +389,33 @@ pub fn main(init: std.process.Init) !void {
             }
         }
 
-        countdown_timer.update(io);
-        const finished = countdown_timer.isFinished();
+        // Update timer if it's running
+        if (countdown_timer) |*timer| {
+            timer.update(io);
+            const finished = timer.isFinished();
 
-        if (finished) {
-            // Send timer_finished notification only once
-            if (!timer_finished_notified) {
-                ipc.notifyTimerFinished(allocator, ipc_writer, total_duration_seconds) catch |err| {
-                    try stderr_writer.print("Error: Failed to send timer finished message ({s})\n", .{@errorName(err)});
+            if (finished) {
+                // Send timer_finished notification only once
+                if (!timer_finished_notified) {
+                    ipc.notifyTimerFinished(allocator, ipc_writer, total_duration_seconds) catch |err| {
+                        try stderr_writer.print("Error: Failed to send timer finished message ({s})\n", .{@errorName(err)});
+                        try stderr_writer.flush();
+                        std.process.exit(1);
+                    };
+                    try ipc_writer.flush();
+                    timer_finished_notified = true;
+                }
+                // Continue loop to handle user input, don't send update_timer or exit
+            } else {
+                // Only send update_timer when not finished
+                const remaining_seconds = @as(u32, @intCast(timer.remaining_ns / std.time.ns_per_s));
+                ipc.updateTimer(allocator, ipc_writer, remaining_seconds, total_duration_seconds, timerStateToStatus(timer.state)) catch |err| {
+                    try stderr_writer.print("Error: Failed to send timer update ({s})\n", .{@errorName(err)});
                     try stderr_writer.flush();
                     std.process.exit(1);
                 };
                 try ipc_writer.flush();
-                timer_finished_notified = true;
             }
-            // Continue loop to handle user input, don't send update_timer or exit
-        } else {
-            // Only send update_timer when not finished
-            const remaining_seconds = @as(u32, @intCast(countdown_timer.remaining_ns / std.time.ns_per_s));
-            ipc.updateTimer(allocator, ipc_writer, remaining_seconds, total_duration_seconds, timerStateToStatus(countdown_timer.state)) catch |err| {
-                try stderr_writer.print("Error: Failed to send timer update ({s})\n", .{@errorName(err)});
-                try stderr_writer.flush();
-                std.process.exit(1);
-            };
-            try ipc_writer.flush();
         }
 
         Io.Clock.Duration.sleep(tick_duration, io) catch |err| {
