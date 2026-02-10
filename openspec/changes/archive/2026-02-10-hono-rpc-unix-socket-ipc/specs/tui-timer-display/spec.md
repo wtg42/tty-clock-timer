@@ -1,9 +1,4 @@
-# tui-timer-display Specification
-
-## Purpose
-TBD - created by archiving change tui-timer-display. Update Purpose after archive.
-
-## Requirements
+## MODIFIED Requirements
 
 ### Requirement: TUI 顯示倒數時間與狀態
 OpenTUI MUST 顯示目前剩餘時間與計時器狀態，且顯示資料 MUST 來自 Node Store/EventBus 的投影狀態；該投影狀態 MUST 由 Zig Core 回傳事件驅動更新。

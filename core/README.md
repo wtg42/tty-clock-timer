@@ -7,7 +7,7 @@
 - `src/main.zig`：CLI entry point、參數解析、程式啟動流程
 - `src/lib/`：核心邏輯模組
 - `src/lib/timer.zig`：倒數計時與狀態管理
-- `src/lib/ipc.zig`：與 Node.js OpenTUI 進程的 IPC 通訊管理 (重構自 ui.zig)
-- `src/lib/notify.zig`：Linux desktop notification 介面
+- `src/lib/ipc.zig`：IPC 協議定義（command/event message、序列化與解析）
+- Core 與 TUI 目前透過 Unix Domain Socket（預設 `/tmp/tty-clock-timer.sock`）交換 command/event
 - `src/lib/config.zig`：CLI options 與預設值定義
 - `assets/`（可選）：字型或示意圖

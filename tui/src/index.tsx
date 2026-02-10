@@ -3,41 +3,30 @@ import { render } from "@opentui/solid";
 import { createSignal, onMount } from "solid-js";
 import { useTimeline } from "@opentui/solid";
 
-type TimerUpdateMessage = {
-  type: "update_timer";
-  remaining_seconds: number;
-  total_duration: number;
-  status: string;
+import { createCommandPlane } from "./command_plane.ts";
+import { type CommandName, type CommandResponse } from "./protocol.ts";
+import { createTimerStore } from "./store.ts";
+import { UnixSocketAdapter } from "./unix_socket_adapter.ts";
+
+const parseSocketPath = (): string => {
+  const socketFlag = "--socket-path";
+  const index = process.argv.findIndex((value) => value === socketFlag);
+  if (index >= 0 && process.argv[index + 1]) {
+    return process.argv[index + 1] as string;
+  }
+  return "/tmp/tty-clock-timer.sock";
 };
 
-type TimerFinishedMessage = {
-  type: "timer_finished";
-  total_duration: number;
-};
+const socketPath = parseSocketPath();
+const adapter = new UnixSocketAdapter(socketPath);
+const store = createTimerStore();
+const { execute: sendCommand } = createCommandPlane((command) => adapter.sendCommand(command));
 
-const [remainingSeconds, setRemainingSeconds] = createSignal<number | null>(null);
-const [timerStatus, setTimerStatus] = createSignal<string>("idle");
-const [isFinished, setIsFinished] = createSignal<boolean>(false);
+const [state, setState] = createSignal(store.getState());
+const [lastCommandError, setLastCommandError] = createSignal<string | null>(null);
 
-const isTimerUpdateMessage = (value: unknown): value is TimerUpdateMessage => {
-  if (!value || typeof value !== "object") return false;
-  const record = value as Record<string, unknown>;
-  return (
-    record.type === "update_timer" &&
-    typeof record.remaining_seconds === "number" &&
-    typeof record.total_duration === "number" &&
-    typeof record.status === "string"
-  );
-};
-
-const isTimerFinishedMessage = (value: unknown): value is TimerFinishedMessage => {
-  if (!value || typeof value !== "object") return false;
-  const record = value as Record<string, unknown>;
-  return (
-    record.type === "timer_finished" &&
-    typeof record.total_duration === "number"
-  );
-};
+store.subscribe((nextState) => setState(nextState));
+adapter.onEvent((event) => store.applyEvent(event));
 
 const formatRemaining = (seconds: number | null) => {
   if (seconds === null) return "--:--";
@@ -46,37 +35,70 @@ const formatRemaining = (seconds: number | null) => {
   return `${minutes.toString().padStart(2, "0")}:${remaining.toString().padStart(2, "0")}`;
 };
 
-const handleLine = (line: string) => {
-  const trimmed = line.trim();
-  if (!trimmed) return;
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(trimmed);
-  } catch {
-    return;
-  }
-  if (isTimerUpdateMessage(parsed)) {
-    setRemainingSeconds(parsed.remaining_seconds);
-    setTimerStatus(parsed.status);
-  } else if (isTimerFinishedMessage(parsed)) {
-    setIsFinished(true);
+const commandFromKey = (key: string): CommandName | null => {
+  switch (key) {
+    case "p":
+      return "pause";
+    case "r":
+      return "resume";
+    case "s":
+      return "reset";
+    case "q":
+      return "quit";
+    default:
+      return null;
   }
 };
 
-let stdinBuffer = "";
+const issueCommand = async (command: CommandName) => {
+  let response: CommandResponse;
+  try {
+    response = await sendCommand(command);
+  } catch (error) {
+    setLastCommandError(error instanceof Error ? error.message : "command_failed");
+    return;
+  }
+
+  if (!response.ok) {
+    setLastCommandError(response.error);
+    return;
+  }
+
+  setLastCommandError(null);
+
+  if (command === "quit") {
+    process.exit(0);
+  }
+};
+
 process.stdin.setEncoding("utf8");
-process.stdin.on("data", (chunk) => {
-  stdinBuffer += chunk;
-  let newlineIndex = stdinBuffer.indexOf("\n");
-  while (newlineIndex >= 0) {
-    const line = stdinBuffer.slice(0, newlineIndex);
-    stdinBuffer = stdinBuffer.slice(newlineIndex + 1);
-    handleLine(line);
-    newlineIndex = stdinBuffer.indexOf("\n");
+process.stdin.on("data", (chunk: string | Buffer) => {
+  const value = typeof chunk === "string" ? chunk : chunk.toString("utf8");
+  for (const char of value) {
+    const command = commandFromKey(char.trim());
+    if (!command) continue;
+    void issueCommand(command);
   }
 });
 
-// Timer finished celebration view with animations
+const wait = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+const connectWithRetry = async () => {
+  while (true) {
+    try {
+      await adapter.connect();
+      setLastCommandError(null);
+      return;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "socket_connect_failed";
+      setLastCommandError(message);
+      await wait(500);
+    }
+  }
+};
+
+void connectWithRetry();
+
 const FinishedView = () => {
   let containerRef: any;
   let titleRef: any;
@@ -84,26 +106,9 @@ const FinishedView = () => {
   const timeline = useTimeline({ autoplay: true });
 
   onMount(() => {
-    // Sequence 1: Fade in + bounce entrance (0-800ms)
-    timeline.add(
-      containerRef,
-      { opacity: 1, duration: 800, ease: "outBounce" },
-      0
-    );
-
-    // Sequence 2: Title upward bounce (800-1000ms)
-    timeline.add(
-      titleRef,
-      { translateY: -2, duration: 100, ease: "outElastic" },
-      800
-    );
-    timeline.add(
-      titleRef,
-      { translateY: 0, duration: 100, ease: "outBounce" },
-      900
-    );
-
-    // Sequence 3: Breathing loop (1000ms+)
+    timeline.add(containerRef, { opacity: 1, duration: 800, ease: "outBounce" }, 0);
+    timeline.add(titleRef, { translateY: -2, duration: 100, ease: "outElastic" }, 800);
+    timeline.add(titleRef, { translateY: 0, duration: 100, ease: "outBounce" }, 900);
     timeline.add(
       containerRef,
       {
@@ -113,7 +118,7 @@ const FinishedView = () => {
         loop: true,
         alternate: true,
       },
-      1000
+      1000,
     );
   });
 
@@ -126,25 +131,28 @@ const FinishedView = () => {
       justifyContent="center"
     >
       <ascii_font ref={titleRef} font="tiny" text="TIME'S UP!" />
-      <text attributes={TextAttributes.BOLD}>Press 'q' to exit</text>
+      <text attributes={TextAttributes.BOLD}>Press q to exit</text>
     </box>
   );
 };
 
-// OpenTUI 入口渲染
-// 步驟：
-// 1. 建立版面容器
-// 2. 根據完成狀態顯示不同內容
-render(() => (
-  <box alignItems="center" justifyContent="center" flexGrow={1}>
-    {!isFinished() ? (
-      <box justifyContent="center" alignItems="center" flexDirection="column">
-        <ascii_font font="tiny" text="TTY Clock Timer" />
-        <text attributes={TextAttributes.BOLD}>{formatRemaining(remainingSeconds())}</text>
-        <text attributes={TextAttributes.DIM}>Status: {timerStatus()}</text>
-      </box>
-    ) : (
-      <FinishedView />
-    )}
-  </box>
-));
+render(() => {
+  return (
+    <box alignItems="center" justifyContent="center" flexGrow={1} flexDirection="column">
+      {!state().isFinished ? (
+        <box justifyContent="center" alignItems="center" flexDirection="column">
+          <ascii_font font="tiny" text="TTY Clock Timer" />
+          <text attributes={TextAttributes.BOLD}>{formatRemaining(state().remainingSeconds)}</text>
+          <text attributes={TextAttributes.DIM}>Status: {state().status}</text>
+          <text attributes={TextAttributes.DIM}>Keys: p pause / r resume / s reset / q quit</text>
+        </box>
+      ) : (
+        <FinishedView />
+      )}
+
+      {lastCommandError() ? (
+        <text attributes={TextAttributes.BOLD}>Command error: {lastCommandError()}</text>
+      ) : null}
+    </box>
+  );
+});
