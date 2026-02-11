@@ -1,3 +1,10 @@
+//! tty_clock_timer CLI entrypoint.
+//!
+//! Responsibilities:
+//! - Parse CLI arguments and initialize countdown timer state.
+//! - Spawn OpenTUI child process when available and bridge IPC via Unix socket.
+//! - Handle fallback keyboard input (`q`) when no UI socket is connected.
+//! - Emit timer projection events (`update_timer`, `timer_finished`, `exit`).
 const std = @import("std");
 const Io = std.Io;
 const Dir = std.Io.Dir;
@@ -17,6 +24,7 @@ fn timerStateToStatus(state: timer_mod.TimerState) []const u8 {
     };
 }
 
+/// Maps CLI parse errors to user-facing messages.
 fn configErrorMessage(err: conf.ParseError) []const u8 {
     return switch (err) {
         conf.ParseError.MissingArguments => "Error: Missing arguments. Usage: tty_clock_timer --minutes <num> | --seconds <num> | --help\n",
@@ -29,6 +37,7 @@ fn configErrorMessage(err: conf.ParseError) []const u8 {
     };
 }
 
+/// Consumes buffered stdin input and returns `true` when quit is requested.
 fn handleStdinInput(allocator: std.mem.Allocator, reader: *Io.Reader, stdin_is_tty: bool) !bool {
     while (true) {
         const buffered = reader.buffered();
@@ -60,6 +69,7 @@ fn handleStdinInput(allocator: std.mem.Allocator, reader: *Io.Reader, stdin_is_t
     }
 }
 
+/// Sends the current timer projection to the selected output stream.
 fn sendTimerProjection(
     allocator: std.mem.Allocator,
     writer: *Io.Writer,
@@ -82,6 +92,7 @@ fn sendTimerProjection(
     try writer.flush();
 }
 
+/// Removes stale Unix socket file if it exists.
 fn clearSocketPath(io: Io, path: []const u8) !void {
     Dir.cwd().deleteFile(io, path) catch |err| switch (err) {
         error.FileNotFound => {},
@@ -89,6 +100,7 @@ fn clearSocketPath(io: Io, path: []const u8) !void {
     };
 }
 
+/// Applies a parsed IPC command and reports command_result to UI.
 fn applyCommand(
     allocator: std.mem.Allocator,
     io: Io,
@@ -140,6 +152,7 @@ fn applyCommand(
     return should_exit;
 }
 
+/// Processes buffered IPC lines and executes commands from UI.
 fn handleSocketCommands(
     allocator: std.mem.Allocator,
     io: Io,

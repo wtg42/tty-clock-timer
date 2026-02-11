@@ -1,64 +1,48 @@
+//! CLI argument parsing for timer duration/help flags.
+//!
+//! Supported flags:
+//! - `--minutes <num>` / `-m <num>`
+//! - `--seconds <num>` / `-s <num>`
+//! - `--help` / `-h`
 const std = @import("std");
 
-/// CLI 參數解析模組
-/// 提供命令列參數解析功能，支援 --minutes/-m、--seconds/-s、--help/-h 參數
-///
-/// 使用範例：
-/// - --minutes 25  或 -m 25  => 倒數 25 分鐘
-/// - --seconds 90  或 -s 90  => 倒數 90 秒
-/// - --help       或 -h     => 顯示說明訊息
+/// Parsed CLI configuration.
 pub const Config = struct {
-    /// 倒數計時持續時間（秒）
+    /// Countdown duration in seconds.
     duration_seconds: u32,
-    /// 重置模式（目前未使用）
+    /// Reserved for future mode flags.
     reset_mode: bool,
-    /// 是否顯示說明訊息
+    /// If true, caller should print usage and exit.
     show_help: bool,
 };
 
-/// CLI 參數解析錯誤類型
+/// CLI parse errors surfaced to main.
 pub const ParseError = error{
-    /// 未提供任何參數
+    /// No flags were provided.
     MissingArguments,
-    /// --minutes/-m 缺少數值
+    /// `--minutes` / `-m` is missing value.
     MissingMinutesValue,
-    /// --seconds/-s 缺少數值
+    /// `--seconds` / `-s` is missing value.
     MissingSecondsValue,
-    /// 不支援的參數
+    /// Unknown flag.
     UnknownArgument,
-    /// 無效的數值格式
+    /// Value cannot be parsed as `u32`.
     InvalidNumber,
-    /// 數值計算溢位（例如 --minutes 的值 * 60 超過 u32 最大值）
+    /// Arithmetic overflow (e.g. minutes * 60 overflows `u32`).
     Overflow,
-    /// 記憶體配置失敗
+    /// Allocation failure when collecting argv.
     OutOfMemory,
 };
 
-/// 從程序實際參數解析 CLI 設定
-///
-/// 使用 `std.process.argsAlloc` 獲取程序參數並傳給 `parseArgsFromSlice` 處理
-///
-/// Parameters:
-///   - allocator: 記憶體分配器，用於分配參數字串
-///
-/// Returns:
-///   - Config: 解析成功的設定物件
-///   - ParseError: 解析失敗的錯誤
+/// Parses args from global process argv (kept for compatibility/testing).
 pub fn parseArgs2(allocator: std.mem.Allocator) !Config {
-    // 步驟：
-    // 1. 讀取 argv
-    // 2. 釋放 argv
-    // 3. 轉交 slice 解析
     const args = try std.process.argsAlloc(allocator);
     defer std.process.argsFree(allocator, args);
     return parseArgsFromSlice(args[1..]);
 }
 
+/// Parses args using `std.process.Init.Minimal` iterator.
 pub fn parseArgs(allocator: std.mem.Allocator, init: std.process.Init.Minimal) !Config {
-    // 步驟：
-    // 1. 收集 argv（跳過 argv[0]）
-    // 2. 建立 slice
-    // 3. 轉交解析
     var argsSlice = try std.ArrayList([]const u8).initCapacity(allocator, 0);
     defer argsSlice.deinit(allocator);
     var args = init.args.iterate();
@@ -74,25 +58,8 @@ pub fn parseArgs(allocator: std.mem.Allocator, init: std.process.Init.Minimal) !
     return parseArgsFromSlice(argsSlice.items);
 }
 
-/// 從字串切片解析 CLI 設定（核心解析邏輯）
-///
-/// 此函式設計為可獨立測試，方便使用固定輸入進行單元測試
-/// 支援的參數格式：
-///   - --minutes <num> 或 -m <num>: 設定倒數分鐘數
-///   - --seconds <num> 或 -s <num>: 設定倒數秒數
-///   - --help 或 -h: 顯示說明訊息
-///
-/// Parameters:
-///   - args: 參數字串切片（不含執行檔名稱）
-///
-/// Returns:
-///   - Config: 解析成功的設定物件
-///   - ParseError: 解析失敗的錯誤（缺少參數、無效格式等）
+/// Core parser from argv slice (without executable name).
 pub fn parseArgsFromSlice(args: []const []const u8) !Config {
-    // 步驟：
-    // 1. 初始化預設 config
-    // 2. 判斷 help 或時間參數
-    // 3. 回傳解析結果或錯誤
     var config = Config{
         .duration_seconds = 0,
         .reset_mode = false,
@@ -105,13 +72,11 @@ pub fn parseArgsFromSlice(args: []const []const u8) !Config {
 
     const first_arg = args[0];
 
-    // 處理 help 參數
     if (isHelpArg(first_arg)) {
         config.show_help = true;
         return config;
     }
 
-    // 處理時間參數
     if (isMinutesArg(first_arg)) {
         if (args.len < 2) {
             return ParseError.MissingMinutesValue;
@@ -139,28 +104,18 @@ pub fn parseArgsFromSlice(args: []const []const u8) !Config {
     return ParseError.UnknownArgument;
 }
 
-/// 輔助函式群
-/// 檢查參數字串是否符合 help flag
-/// 支援：--help 和 -h
+/// Returns true when `arg` is help flag.
 fn isHelpArg(arg: []const u8) bool {
-    // 步驟：
-    // 1. 比對長短旗標
     return std.mem.eql(u8, arg, "--help") or std.mem.eql(u8, arg, "-h");
 }
 
-/// 檢查參數字串是否符合 minutes flag
-/// 支援：--minutes 和 -m
+/// Returns true when `arg` is minutes flag.
 fn isMinutesArg(arg: []const u8) bool {
-    // 步驟：
-    // 1. 比對長短旗標
     return std.mem.eql(u8, arg, "--minutes") or std.mem.eql(u8, arg, "-m");
 }
 
-/// 檢查參數字串是否符合 seconds flag
-/// 支援：--seconds 和 -s
+/// Returns true when `arg` is seconds flag.
 fn isSecondsArg(arg: []const u8) bool {
-    // 步驟：
-    // 1. 比對長短旗標
     return std.mem.eql(u8, arg, "--seconds") or std.mem.eql(u8, arg, "-s");
 }
 

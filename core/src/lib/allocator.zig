@@ -1,81 +1,47 @@
-//! Memory Allocator Management Module
+//! Allocator context used by core runtime.
 //!
-//! 提供統一的 allocator 介面，根據編譯模式自動選擇適當的 allocator 實作。
-//! Debug 模式使用 DebugAllocator 來檢測記憶體洩漏和雙重釋放；
-//! Release 模式使用 ArenaAllocator 以獲得最佳效能。
+//! Policy:
+//! - Debug mode uses `DebugAllocator` for leak detection.
+//! - Non-Debug modes use `ArenaAllocator` for lower allocation overhead.
 //!
-//! # 設計模式
-//! - RAII (Resource Acquisition Is Initialization): AllocatorCtx 結構體同時封裝 allocator 實例和對應的清理方法
-//! - 明確生命週期管理: 實例儲存在結構體中，避免空指標問題
-//!
-//! # 使用範例
-//! const AllocatorCtx = @import("allocator.zig");
-//!
-//! pub fn main() !void {
-//!     var ctx = AllocatorCtx.init();
-//!     defer _ = ctx.deinit();
-//!
-//!     const data = try ctx.allocator().create(u8);
-//!     defer ctx.allocator().destroy(data);
-//! }
+//! `AllocatorCtx` wraps allocator creation and teardown in one RAII-style type
+//! so callers can `init` once and `defer deinit` at program boundaries.
 
 const std = @import("std");
 const builtin = @import("builtin");
 
 pub const AllocatorCtx = struct {
-    // 這個結構體管理記憶體分配器，根據編譯模式選擇不同的 allocator
-    // 欄位使用可選類型，因為不同模式只用一個
-
-    /// Debug 模式的 allocator，用來檢查記憶體洩漏（只在 Debug 模式使用）
+    /// Active in Debug mode for leak detection.
     debug_alloc: ?std.heap.DebugAllocator(.{}) = null,
 
-    /// Release 模式的 allocator，用來高效分配記憶體（只在 Release 模式使用）
+    /// Active in non-Debug modes for amortized allocations.
     arena_alloc: ?std.heap.ArenaAllocator = null,
 
-    // 建立 allocator 上下文，根據編譯模式選擇合適的 allocator
-    // Debug 模式：用來檢查記憶體問題
-    // Release 模式：用來快速分配記憶體
+    /// Creates allocator context according to current build mode.
     pub fn init() AllocatorCtx {
-        // 步驟：
-        // 1. 判斷編譯模式
-        // 2. 建立對應 allocator
         if (builtin.mode == .Debug) {
-            // Debug 模式：使用 DebugAllocator 來檢查記憶體洩漏
             return .{ .debug_alloc = std.heap.DebugAllocator(.{}).init };
         } else {
-            // Release 模式：使用 ArenaAllocator 來高效分配
             return .{
                 .arena_alloc = std.heap.ArenaAllocator.init(std.heap.page_allocator),
             };
         }
     }
 
-    // 取得標準的記憶體分配器介面，用來分配和釋放記憶體
+    /// Returns active allocator interface.
     pub fn allocator(self: *AllocatorCtx) std.mem.Allocator {
-        // 步驟：
-        // 1. 判斷編譯模式
-        // 2. 回傳對應介面
         if (builtin.mode == .Debug) {
-            // 返回 DebugAllocator 的介面
             return self.debug_alloc.?.allocator();
         } else {
-            // 返回 ArenaAllocator 的介面
             return self.arena_alloc.?.allocator();
         }
     }
 
-    // 清理 allocator 資源，並在 Debug 模式檢查是否有記憶體洩漏
-    // 返回值：Debug 模式返回檢查結果，Release 模式返回 .ok
+    /// Releases allocator resources; Debug mode reports leak check result.
     pub fn deinit(self: *AllocatorCtx) ?std.heap.Check {
-        // 步驟：
-        // 1. 判斷編譯模式
-        // 2. 清理 allocator
-        // 3. 回傳檢查結果
         if (builtin.mode == .Debug) {
-            // Debug 模式：檢查洩漏並清理
             return self.debug_alloc.?.deinit();
         } else {
-            // Release 模式：清理並返回無問題
             self.arena_alloc.?.deinit();
             return .ok;
         }

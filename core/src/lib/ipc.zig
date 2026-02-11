@@ -1,3 +1,8 @@
+//! IPC message schema and helpers between Zig core and OpenTUI process.
+//!
+//! Transport format is JSON lines (one JSON object per line).
+//! This module defines the message union, parsing/serialization helpers,
+//! and convenience send APIs used by `main.zig`.
 const std = @import("std");
 const Io = std.Io;
 
@@ -16,6 +21,7 @@ pub const Command = enum {
     reset,
     quit,
 
+    /// Parses command string to enum tag.
     pub fn parse(value: []const u8) ?Command {
         inline for (std.meta.fields(Command)) |field| {
             if (std.mem.eql(u8, value, field.name)) {
@@ -25,6 +31,7 @@ pub const Command = enum {
         return null;
     }
 
+    /// Returns command tag name for JSON payloads.
     pub fn asSlice(self: Command) []const u8 {
         return @tagName(self);
     }
@@ -103,6 +110,7 @@ pub const ParseError = error{
     InvalidMessage,
 };
 
+/// Releases heap-owned payload fields inside parsed message.
 pub fn freeMessage(allocator: std.mem.Allocator, message: Message) void {
     switch (message) {
         .update_timer => |payload| allocator.free(payload.status),
@@ -119,6 +127,7 @@ pub fn freeMessage(allocator: std.mem.Allocator, message: Message) void {
     }
 }
 
+/// Parses one JSON message line into typed `Message`.
 pub fn parseMessage(allocator: std.mem.Allocator, json: []const u8) !Message {
     var parsed = try std.json.parseFromSlice(std.json.Value, allocator, json, .{});
     defer parsed.deinit();
@@ -232,6 +241,7 @@ pub fn parseMessage(allocator: std.mem.Allocator, json: []const u8) !Message {
     return error.InvalidMessageType;
 }
 
+/// Serializes and writes one message plus trailing newline.
 pub fn sendMessage(allocator: std.mem.Allocator, writer: *Io.Writer, message: Message) !void {
     const json = try std.json.Stringify.valueAlloc(allocator, message, .{});
     defer allocator.free(json);
@@ -239,6 +249,7 @@ pub fn sendMessage(allocator: std.mem.Allocator, writer: *Io.Writer, message: Me
     try writer.writeByte('\n');
 }
 
+/// Reads one line and converts plain `q` into keyboard_input message.
 pub fn receiveAndFilterMessage(allocator: std.mem.Allocator, reader: *Io.Reader) !Message {
     const line = try reader.takeDelimiter('\n') orelse return error.EndOfInput;
     if (parseMessage(allocator, line)) |msg| {
@@ -252,6 +263,7 @@ pub fn receiveAndFilterMessage(allocator: std.mem.Allocator, reader: *Io.Reader)
     }
 }
 
+/// Sends `update_timer` message.
 pub fn updateTimer(
     allocator: std.mem.Allocator,
     writer: *Io.Writer,
@@ -268,14 +280,17 @@ pub fn updateTimer(
     } });
 }
 
+/// Sends `timer_finished` message.
 pub fn notifyTimerFinished(allocator: std.mem.Allocator, writer: *Io.Writer, total_duration: u32) !void {
     try sendMessage(allocator, writer, Message{ .timer_finished = .{ .total_duration = total_duration } });
 }
 
+/// Sends `exit` message.
 pub fn sendExit(allocator: std.mem.Allocator, writer: *Io.Writer) !void {
     try sendMessage(allocator, writer, Message{ .exit = {} });
 }
 
+/// Sends `command_result` message.
 pub fn sendCommandResult(
     allocator: std.mem.Allocator,
     writer: *Io.Writer,
@@ -290,6 +305,7 @@ pub fn sendCommandResult(
     } });
 }
 
+/// Returns true when input key means quit.
 pub fn handleKeyboardInput(key: []const u8) bool {
     return std.mem.eql(u8, key, "q");
 }
