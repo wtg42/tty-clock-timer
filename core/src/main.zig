@@ -8,7 +8,6 @@
 const std = @import("std");
 const Io = std.Io;
 const Dir = std.Io.Dir;
-const allocator_ctx = @import("lib/allocator.zig");
 const conf = @import("lib/config.zig");
 const ipc = @import("lib/ipc.zig");
 const timer_mod = @import("lib/timer.zig");
@@ -218,13 +217,8 @@ fn handleSocketCommands(
 }
 
 pub fn main(init: std.process.Init) !void {
-    // Step 1: Initialize allocator context for the whole process lifecycle.
-    var a_ctx = allocator_ctx.AllocatorCtx.init();
-    defer {
-        const result = a_ctx.deinit();
-        if (result == .leak) @panic("memory leak detected");
-    }
-    const allocator = a_ctx.allocator();
+    // Step 1: Use allocator provided by std.process.Init.
+    const allocator = init.gpa;
 
     // Step 2: Build threaded Io context used by timer, socket, and process APIs.
     var threaded: std.Io.Threaded = .init(allocator, .{ .environ = init.minimal.environ });

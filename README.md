@@ -7,6 +7,7 @@
 - `core/`（Zig）：CLI 參數解析、timer 狀態機、IPC server、UI 子程序啟動。
 - `tui/`（TypeScript + OpenTUI/Solid）：畫面渲染、鍵盤操作、command plane、socket client。
 - `openspec/`：需求、設計、任務與變更歷程。
+- Core runtime allocator 目前由 `main(init: std.process.Init)` 提供，預設使用 `init.gpa`。
 
 ## 系統流程（ASCII）
 
