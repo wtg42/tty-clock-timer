@@ -8,6 +8,7 @@ import { type CommandName, type CommandResponse } from "./protocol.ts";
 import { createTimerStore } from "./store.ts";
 import { UnixSocketAdapter } from "./unix_socket_adapter.ts";
 
+// Step 1: Read CLI socket override; fallback to default core socket path.
 const parseSocketPath = (): string => {
   const socketFlag = "--socket-path";
   const index = process.argv.findIndex((value) => value === socketFlag);
@@ -17,17 +18,20 @@ const parseSocketPath = (): string => {
   return "/tmp/tty-clock-timer.sock";
 };
 
+// Step 2: Build communication and state primitives.
 const socketPath = parseSocketPath();
 const adapter = new UnixSocketAdapter(socketPath);
 const store = createTimerStore();
 const { execute: sendCommand } = createCommandPlane((command) => adapter.sendCommand(command));
 
+// Step 3: Bridge store state into Solid reactive signals.
 const [state, setState] = createSignal(store.getState());
 const [lastCommandError, setLastCommandError] = createSignal<string | null>(null);
 
 store.subscribe((nextState) => setState(nextState));
 adapter.onEvent((event) => store.applyEvent(event));
 
+// Step 4: Convert seconds projection to MM:SS for terminal display.
 const formatRemaining = (seconds: number | null) => {
   if (seconds === null) return "--:--";
   const minutes = Math.floor(seconds / 60);
@@ -35,6 +39,7 @@ const formatRemaining = (seconds: number | null) => {
   return `${minutes.toString().padStart(2, "0")}:${remaining.toString().padStart(2, "0")}`;
 };
 
+// Step 5: Map single-key shortcuts to command names understood by core.
 const commandFromKey = (key: string): CommandName | null => {
   switch (key) {
     case "p":
@@ -50,6 +55,7 @@ const commandFromKey = (key: string): CommandName | null => {
   }
 };
 
+// Step 6: Send command through command plane and update UI error state.
 const issueCommand = async (command: CommandName) => {
   let response: CommandResponse;
   try {
@@ -67,10 +73,12 @@ const issueCommand = async (command: CommandName) => {
   setLastCommandError(null);
 
   if (command === "quit") {
+    // TUI exits after core confirms quit command.
     process.exit(0);
   }
 };
 
+// Step 7: Subscribe to raw stdin key stream and dispatch mapped commands.
 process.stdin.setEncoding("utf8");
 process.stdin.on("data", (chunk: string | Buffer) => {
   const value = typeof chunk === "string" ? chunk : chunk.toString("utf8");
@@ -83,6 +91,7 @@ process.stdin.on("data", (chunk: string | Buffer) => {
 
 const wait = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
+// Step 8: Retry socket connection until core IPC server is ready.
 const connectWithRetry = async () => {
   while (true) {
     try {
@@ -97,6 +106,7 @@ const connectWithRetry = async () => {
   }
 };
 
+// Kick off background connection loop immediately on process start.
 void connectWithRetry();
 
 const FinishedView = () => {
@@ -137,6 +147,7 @@ const FinishedView = () => {
 };
 
 render(() => {
+  // Step 9: Render either countdown view or finished animation view.
   return (
     <box alignItems="center" justifyContent="center" flexGrow={1} flexDirection="column">
       {!state().isFinished ? (

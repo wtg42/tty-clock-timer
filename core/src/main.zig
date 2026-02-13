@@ -218,6 +218,7 @@ fn handleSocketCommands(
 }
 
 pub fn main(init: std.process.Init) !void {
+    // Step 1: Initialize allocator context for the whole process lifecycle.
     var a_ctx = allocator_ctx.AllocatorCtx.init();
     defer {
         const result = a_ctx.deinit();
@@ -225,6 +226,7 @@ pub fn main(init: std.process.Init) !void {
     }
     const allocator = a_ctx.allocator();
 
+    // Step 2: Build threaded Io context used by timer, socket, and process APIs.
     var threaded: std.Io.Threaded = .init(allocator, .{ .environ = init.minimal.environ });
     defer threaded.deinit();
     const io = threaded.io();
@@ -237,6 +239,8 @@ pub fn main(init: std.process.Init) !void {
     var stderr_file_writer: Io.File.Writer = .init(.stderr(), io, &stderr_buffer);
     const stderr_writer = &stderr_file_writer.interface;
 
+    // Step 3: Configure stdin into raw mode when running in a terminal.
+    // This lets us react to single-key input (`q`) without waiting for Enter.
     var original_termios: ?std.posix.termios = null;
     const stdin_handle = Io.File.stdin().handle;
     const stdin_termios = std.posix.tcgetattr(stdin_handle) catch |err| switch (err) {
@@ -266,6 +270,7 @@ pub fn main(init: std.process.Init) !void {
         };
     };
 
+    // Step 4: Parse CLI arguments and fail fast on invalid input.
     const config = conf.parseArgs(allocator, init.minimal) catch |err| {
         try stdout_writer.print("{s}", .{configErrorMessage(err)});
         try stdout_writer.flush();
@@ -273,6 +278,7 @@ pub fn main(init: std.process.Init) !void {
     };
 
     if (config.show_help) {
+        // Help path (explicit `--help` or empty args): print and exit cleanly.
         try stdout_writer.print("{s}", .{helpMessage()});
         try stdout_writer.flush();
         return;
@@ -281,6 +287,7 @@ pub fn main(init: std.process.Init) !void {
     const total_duration_seconds = config.duration_seconds;
     const total_duration_ns = @as(u64, total_duration_seconds) * std.time.ns_per_s;
 
+    // Step 5: Initialize and start the timer state machine.
     var countdown_timer = timer_mod.CountdownTimer.init(total_duration_ns);
     countdown_timer.start(io) catch |err| {
         try stderr_writer.print("Error: Failed to start timer ({s})\n", .{@errorName(err)});
@@ -303,6 +310,7 @@ pub fn main(init: std.process.Init) !void {
     }
 
     const ui_candidates = [_][]const u8{ "tui", "../tui", "../../tui" };
+    // Step 6: Resolve TUI working directory from common launch locations.
     const ui_cwd: ?[]const u8 = blk: {
         for (ui_candidates) |candidate| {
             if (Dir.cwd().openDir(io, candidate, .{})) |dir| {
@@ -314,6 +322,7 @@ pub fn main(init: std.process.Init) !void {
     };
 
     if (std.process.can_spawn and ui_cwd != null) {
+        // Step 7: Prepare Unix socket server for TUI <-> core IPC bridge.
         clearSocketPath(io, SOCKET_PATH) catch |err| {
             try stderr_writer.print("Error: Failed to clear stale socket ({s})\n", .{@errorName(err)});
             try stderr_writer.flush();
@@ -335,6 +344,7 @@ pub fn main(init: std.process.Init) !void {
 
     if (std.process.can_spawn) {
         if (ui_cwd) |cwd| {
+            // Step 8: Spawn TUI child process and inject socket path argument.
             const ui_argv = &[_][]const u8{
                 "bun",
                 "run",
@@ -368,6 +378,7 @@ pub fn main(init: std.process.Init) !void {
     var timer_finished_notified = false;
 
     if (socket_server) |*server| {
+        // Step 9: Block until TUI connects, then send initial timer projection.
         var accepted = server.accept(io) catch |err| {
             try stderr_writer.print("Error: Failed to accept UI socket connection ({s})\n", .{@errorName(err)});
             try stderr_writer.flush();
@@ -393,6 +404,11 @@ pub fn main(init: std.process.Init) !void {
     var stdin_buffer: [1024]u8 = undefined;
     var stdin_reader: Io.File.Reader = .initStreaming(.stdin(), io, &stdin_buffer);
 
+    // Step 10: Main loop
+    // - poll input sources (stdin/socket)
+    // - apply commands
+    // - advance timer
+    // - emit projection updates
     while (true) {
         var pollfds: [2]std.posix.pollfd = undefined;
         var poll_count: usize = 0;
@@ -456,6 +472,7 @@ pub fn main(init: std.process.Init) !void {
         }
 
         if (stdin_reader.interface.bufferedLen() > 0) {
+            // Fallback command path when TUI socket is unavailable.
             if (try handleStdinInput(allocator, &stdin_reader.interface, stdin_is_tty)) {
                 if (socket_stream != null) {
                     try ipc.sendExit(allocator, &socket_writer.interface);
@@ -466,6 +483,7 @@ pub fn main(init: std.process.Init) !void {
         }
 
         if (socket_stream != null and socket_reader.interface.bufferedLen() > 0) {
+            // Primary command path from TUI command plane.
             if (try handleSocketCommands(
                 allocator,
                 io,

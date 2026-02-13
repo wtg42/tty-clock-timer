@@ -64,6 +64,7 @@ pub fn parseArgsFromSlice(args: []const []const u8) !Config {
         .show_help = false,
     };
 
+    // Step A: No args defaults to help mode for friendlier CLI onboarding.
     if (args.len == 0) {
         config.show_help = true;
         return config;
@@ -71,11 +72,13 @@ pub fn parseArgsFromSlice(args: []const []const u8) !Config {
 
     const first_arg = args[0];
 
+    // Step B: Explicit help has highest priority and short-circuits parsing.
     if (isHelpArg(first_arg)) {
         config.show_help = true;
         return config;
     }
 
+    // Step C: Parse minutes and normalize to seconds.
     if (isMinutesArg(first_arg)) {
         if (args.len < 2) {
             return ParseError.MissingMinutesValue;
@@ -89,6 +92,7 @@ pub fn parseArgsFromSlice(args: []const []const u8) !Config {
         return config;
     }
 
+    // Step D: Parse seconds directly.
     if (isSecondsArg(first_arg)) {
         if (args.len < 2) {
             return ParseError.MissingSecondsValue;
@@ -100,6 +104,7 @@ pub fn parseArgsFromSlice(args: []const []const u8) !Config {
         return config;
     }
 
+    // Step E: Any unmatched flag is treated as unknown input.
     return ParseError.UnknownArgument;
 }
 
