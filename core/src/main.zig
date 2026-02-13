@@ -15,6 +15,19 @@ const timer_mod = @import("lib/timer.zig");
 
 const SOCKET_PATH = "/tmp/tty-clock-timer.sock";
 
+fn helpMessage() []const u8 {
+    return "Usage: tty_clock_timer [OPTIONS]\n" ++
+        "\n" ++
+        "Options:\n" ++
+        "  -m, --minutes <num>    Set countdown minutes\n" ++
+        "  -s, --seconds <num>    Set countdown seconds\n" ++
+        "  -h, --help             Show this help message\n" ++
+        "\n" ++
+        "Example:\n" ++
+        "  tty_clock_timer --minutes 25\n" ++
+        "  tty_clock_timer -s 90\n";
+}
+
 fn timerStateToStatus(state: timer_mod.TimerState) []const u8 {
     return switch (state) {
         .idle => "idle",
@@ -27,7 +40,6 @@ fn timerStateToStatus(state: timer_mod.TimerState) []const u8 {
 /// Maps CLI parse errors to user-facing messages.
 fn configErrorMessage(err: conf.ParseError) []const u8 {
     return switch (err) {
-        conf.ParseError.MissingArguments => "Error: Missing arguments. Usage: tty_clock_timer --minutes <num> | --seconds <num> | --help\n",
         conf.ParseError.MissingMinutesValue => "Error: --minutes requires a numeric value\n",
         conf.ParseError.MissingSecondsValue => "Error: --seconds requires a numeric value\n",
         conf.ParseError.UnknownArgument => "Error: Unknown argument. Use --help for usage information\n",
@@ -261,16 +273,7 @@ pub fn main(init: std.process.Init) !void {
     };
 
     if (config.show_help) {
-        try stdout_writer.print("Usage: tty_clock_timer [OPTIONS]\n", .{});
-        try stdout_writer.print("\n", .{});
-        try stdout_writer.print("Options:\n", .{});
-        try stdout_writer.print("  -m, --minutes <num>    Set countdown minutes\n", .{});
-        try stdout_writer.print("  -s, --seconds <num>    Set countdown seconds\n", .{});
-        try stdout_writer.print("  -h, --help             Show this help message\n", .{});
-        try stdout_writer.print("\n", .{});
-        try stdout_writer.print("Example:\n", .{});
-        try stdout_writer.print("  tty_clock_timer --minutes 25\n", .{});
-        try stdout_writer.print("  tty_clock_timer -s 90\n", .{});
+        try stdout_writer.print("{s}", .{helpMessage()});
         try stdout_writer.flush();
         return;
     }
@@ -516,10 +519,6 @@ pub fn main(init: std.process.Init) !void {
 
 test "configErrorMessage - mapping" {
     try std.testing.expectEqualStrings(
-        "Error: Missing arguments. Usage: tty_clock_timer --minutes <num> | --seconds <num> | --help\n",
-        configErrorMessage(conf.ParseError.MissingArguments),
-    );
-    try std.testing.expectEqualStrings(
         "Error: --minutes requires a numeric value\n",
         configErrorMessage(conf.ParseError.MissingMinutesValue),
     );
@@ -542,5 +541,12 @@ test "configErrorMessage - mapping" {
     try std.testing.expectEqualStrings(
         "Error: Out of memory\n",
         configErrorMessage(conf.ParseError.OutOfMemory),
+    );
+}
+
+test "helpMessage - stable output" {
+    try std.testing.expectEqualStrings(
+        "Usage: tty_clock_timer [OPTIONS]\n\nOptions:\n  -m, --minutes <num>    Set countdown minutes\n  -s, --seconds <num>    Set countdown seconds\n  -h, --help             Show this help message\n\nExample:\n  tty_clock_timer --minutes 25\n  tty_clock_timer -s 90\n",
+        helpMessage(),
     );
 }

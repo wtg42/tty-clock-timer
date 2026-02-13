@@ -18,8 +18,6 @@ pub const Config = struct {
 
 /// CLI parse errors surfaced to main.
 pub const ParseError = error{
-    /// No flags were provided.
-    MissingArguments,
     /// `--minutes` / `-m` is missing value.
     MissingMinutesValue,
     /// `--seconds` / `-s` is missing value.
@@ -67,7 +65,8 @@ pub fn parseArgsFromSlice(args: []const []const u8) !Config {
     };
 
     if (args.len == 0) {
-        return ParseError.MissingArguments;
+        config.show_help = true;
+        return config;
     }
 
     const first_arg = args[0];
@@ -167,9 +166,12 @@ test "parseArgsFromSlice - short help" {
     try std.testing.expectEqual(true, config.show_help);
 }
 
-test "parseArgsFromSlice - missing arguments" {
+test "parseArgsFromSlice - empty args shows help" {
     const args = &[_][]const u8{};
-    try std.testing.expectError(ParseError.MissingArguments, parseArgsFromSlice(args));
+    const config = try parseArgsFromSlice(args);
+    try std.testing.expectEqual(@as(u32, 0), config.duration_seconds);
+    try std.testing.expectEqual(false, config.reset_mode);
+    try std.testing.expectEqual(true, config.show_help);
 }
 
 test "parseArgsFromSlice - missing minutes value" {
