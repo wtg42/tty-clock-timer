@@ -6,7 +6,7 @@
 
 - CLI 支援 `--minutes` / `--seconds` / `--help`。
 - 無參數啟動時會顯示完整 help（與 `--help` 一致）。
-- Runtime allocator 目前使用 `main(init: std.process.Init)` 提供的 `init.gpa`。
+- Runtime allocator 與 I/O 目前使用 `main(init: std.process.Init)` 提供的 `init.gpa` 與 `init.io`。
 - 若可啟動 UI，會嘗試連接並使用預設 socket：`/tmp/tty-clock-timer.sock`。
 - 若沒有 UI 連線，仍可在 CLI 路徑透過 stdin `q` 結束。
 - Timer 事件會輸出 `update_timer`、`timer_finished`、`exit`。

@@ -220,10 +220,8 @@ pub fn main(init: std.process.Init) !void {
     // Step 1: Use allocator provided by std.process.Init.
     const allocator = init.gpa;
 
-    // Step 2: Build threaded Io context used by timer, socket, and process APIs.
-    var threaded: std.Io.Threaded = .init(allocator, .{ .environ = init.minimal.environ });
-    defer threaded.deinit();
-    const io = threaded.io();
+    // Step 2: Use Io context provided by std.process.Init.
+    const io = init.io;
 
     var stdout_buffer: [1024]u8 = undefined;
     var stdout_file_writer: Io.File.Writer = .init(.stdout(), io, &stdout_buffer);
