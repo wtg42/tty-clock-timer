@@ -216,23 +216,15 @@ fn handleSocketCommands(
     }
 }
 
-pub fn main(init: std.process.Init) !void {
-    // Step 1: Use allocator provided by std.process.Init.
-    const allocator = init.gpa;
+/// Context for raw mode terminal settings management.
+const RawModeContext = struct {
+    original_termios: ?std.posix.termios,
+    stdin_is_tty: bool,
+};
 
-    // Step 2: Use Io context provided by std.process.Init.
-    const io = init.io;
-
-    var stdout_buffer: [1024]u8 = undefined;
-    var stdout_file_writer: Io.File.Writer = .init(.stdout(), io, &stdout_buffer);
-    const stdout_writer = &stdout_file_writer.interface;
-
-    var stderr_buffer: [1024]u8 = undefined;
-    var stderr_file_writer: Io.File.Writer = .init(.stderr(), io, &stderr_buffer);
-    const stderr_writer = &stderr_file_writer.interface;
-
-    // Step 3: Configure stdin into raw mode when running in a terminal.
-    // This lets us react to single-key input (`q`) without waiting for Enter.
+/// Set stdin to raw mode (no echo, no canonical input) for single-key input (`q`).
+/// Returns a context for restoration via defer.
+fn setupRawMode(stderr_writer: *Io.Writer) !RawModeContext {
     var original_termios: ?std.posix.termios = null;
     const stdin_handle = Io.File.stdin().handle;
     const stdin_termios = std.posix.tcgetattr(stdin_handle) catch |err| switch (err) {
@@ -254,9 +246,222 @@ pub fn main(init: std.process.Init) !void {
         };
         original_termios = current;
     }
-    const stdin_is_tty = stdin_termios != null;
-    defer if (original_termios) |saved| {
-        std.posix.tcsetattr(stdin_handle, .NOW, saved) catch |err| {
+    return RawModeContext{
+        .original_termios = original_termios,
+        .stdin_is_tty = stdin_termios != null,
+    };
+}
+
+/// Resolve TUI working directory from common launch locations.
+/// Tries "tui", "../tui", "../../tui" in order.
+/// Returns the first found directory path or null if none exist.
+fn findUiCwd(io: Io) ?[]const u8 {
+    const ui_candidates = [_][]const u8{ "tui", "../tui", "../../tui" };
+    for (ui_candidates) |candidate| {
+        if (Dir.cwd().openDir(io, candidate, .{})) |dir| {
+            dir.close(io);
+            return candidate;
+        } else |_| {}
+    }
+    return null;
+}
+
+/// Context for Unix socket server management.
+const SocketServerContext = struct {
+    server: std.Io.net.Server,
+};
+
+/// Prepare Unix socket server for TUI <-> core IPC bridge.
+/// Clears stale socket file, initializes address, and starts listening.
+fn setupSocket(io: Io, stderr_writer: *Io.Writer, socket_path: []const u8) !SocketServerContext {
+    clearSocketPath(io, socket_path) catch |err| {
+        try stderr_writer.print("Error: Failed to clear stale socket ({s})\n", .{@errorName(err)});
+        try stderr_writer.flush();
+        std.process.exit(1);
+    };
+
+    const socket_address = std.Io.net.UnixAddress.init(socket_path) catch |err| {
+        try stderr_writer.print("Error: Invalid socket path ({s})\n", .{@errorName(err)});
+        try stderr_writer.flush();
+        std.process.exit(1);
+    };
+
+    const server = std.Io.net.UnixAddress.listen(&socket_address, io, .{}) catch |err| {
+        try stderr_writer.print("Error: Failed to listen on unix socket ({s})\n", .{@errorName(err)});
+        try stderr_writer.flush();
+        std.process.exit(1);
+    };
+
+    return SocketServerContext{ .server = server };
+}
+
+/// Main event loop: poll stdin/socket, handle commands, advance timer, emit updates.
+fn runEventLoop(
+    allocator: std.mem.Allocator,
+    io: Io,
+    stderr_writer: *Io.Writer,
+    stdout_writer: *Io.Writer,
+    stdin_is_tty: bool,
+    stdin_reader: *Io.Reader,
+    socket_reader: *Io.Reader,
+    socket_writer: *Io.Writer,
+    countdown_timer: *timer_mod.CountdownTimer,
+    total_duration_seconds: u32,
+    timer_finished_notified: *bool,
+    socket_stream: *?std.Io.net.Stream,
+    tick_duration: std.Io.Clock.Duration,
+) void {
+    const SOCKET_FD_INDEX = 1;
+
+    while (true) {
+        var pollfds: [2]std.posix.pollfd = undefined;
+        var poll_count: usize = 0;
+        const read_stdin = socket_stream.* == null;
+
+        // Add stdin to poll when no socket connected
+        if (read_stdin) {
+            pollfds[0] = .{
+                .fd = Io.File.stdin().handle,
+                .events = std.posix.POLL.IN,
+                .revents = 0,
+            };
+            poll_count += 1;
+        }
+
+        if (socket_stream.*) |stream| {
+            pollfds[poll_count] = .{
+                .fd = stream.socket.handle,
+                .events = std.posix.POLL.IN,
+                .revents = 0,
+            };
+            poll_count += 1;
+        }
+
+        if (poll_count > 0) {
+            _ = std.posix.poll(pollfds[0..poll_count], 0) catch |err| {
+                stderr_writer.print("Error: Failed to poll descriptors ({s})\n", .{@errorName(err)}) catch {};
+                stderr_writer.flush() catch {};
+                std.process.exit(1);
+            };
+        }
+
+        if (read_stdin and poll_count > 0 and (pollfds[0].revents & std.posix.POLL.IN) != 0) {
+            stdin_reader.fillMore() catch |err| switch (err) {
+                error.EndOfStream => {},
+                error.ReadFailed => {
+                    stderr_writer.print("Error: Failed to read stdin ({s})\n", .{@errorName(err)}) catch {};
+                    stderr_writer.flush() catch {};
+                    std.process.exit(1);
+                },
+            };
+        }
+
+        if (socket_stream.* != null and poll_count > 0) {
+            // Socket is at index 1 if stdin is polled, index 0 otherwise
+            const socket_index: usize = if (read_stdin) SOCKET_FD_INDEX else 0;
+            if ((pollfds[socket_index].revents & std.posix.POLL.IN) != 0) {
+                socket_reader.fillMore() catch |err| switch (err) {
+                    error.EndOfStream => {
+                        if (socket_stream.*) |stream| {
+                            var copy = stream;
+                            copy.close(io);
+                        }
+                        socket_stream.* = null;
+                    },
+                    error.ReadFailed => {
+                        stderr_writer.print("Error: Failed to read socket ({s})\n", .{@errorName(err)}) catch {};
+                        stderr_writer.flush() catch {};
+                        std.process.exit(1);
+                    },
+                };
+            }
+        }
+
+        if (stdin_reader.bufferedLen() > 0) {
+            // Fallback command path when TUI socket is unavailable.
+            if (handleStdinInput(allocator, stdin_reader, stdin_is_tty) catch false) {
+                if (socket_stream.* != null) {
+                    ipc.sendExit(allocator, socket_writer) catch {};
+                    socket_writer.flush() catch {};
+                }
+                return;
+            }
+        }
+
+        if (socket_stream.* != null and socket_reader.bufferedLen() > 0) {
+            // Primary command path from TUI command plane.
+            if (handleSocketCommands(
+                allocator,
+                io,
+                countdown_timer,
+                total_duration_seconds,
+                timer_finished_notified,
+                socket_reader,
+                socket_writer,
+            ) catch false) {
+                ipc.sendExit(allocator, socket_writer) catch {};
+                socket_writer.flush() catch {};
+                return;
+            }
+        }
+
+        countdown_timer.update(io);
+
+        if (socket_stream.*) |_| {
+            sendTimerProjection(
+                allocator,
+                socket_writer,
+                countdown_timer,
+                total_duration_seconds,
+                timer_finished_notified,
+            ) catch |err| {
+                stderr_writer.print("Error: Failed to send socket timer event ({s})\n", .{@errorName(err)}) catch {};
+                stderr_writer.flush() catch {};
+                std.process.exit(1);
+            };
+        } else {
+            sendTimerProjection(
+                allocator,
+                stdout_writer,
+                countdown_timer,
+                total_duration_seconds,
+                timer_finished_notified,
+            ) catch |err| {
+                stderr_writer.print("Error: Failed to send timer event ({s})\n", .{@errorName(err)}) catch {};
+                stderr_writer.flush() catch {};
+                std.process.exit(1);
+            };
+        }
+
+        Io.Clock.Duration.sleep(tick_duration, io) catch |err| {
+            stderr_writer.print("Error: Failed to sleep ({s})\n", .{@errorName(err)}) catch {};
+            stderr_writer.flush() catch {};
+            std.process.exit(1);
+        };
+    }
+}
+
+pub fn main(init: std.process.Init) !void {
+    // Step 1: Use allocator provided by std.process.Init.
+    const allocator = init.gpa;
+
+    // Step 2: Use Io context provided by std.process.Init.
+    const io = init.io;
+
+    var stdout_buffer: [1024]u8 = undefined;
+    var stdout_file_writer: Io.File.Writer = .init(.stdout(), io, &stdout_buffer);
+    const stdout_writer = &stdout_file_writer.interface;
+
+    var stderr_buffer: [1024]u8 = undefined;
+    var stderr_file_writer: Io.File.Writer = .init(.stderr(), io, &stderr_buffer);
+    const stderr_writer = &stderr_file_writer.interface;
+
+    // Step 3: Configure stdin into raw mode when running in a terminal.
+    // This lets us react to single-key input (`q`) without waiting for Enter.
+    const raw_mode = try setupRawMode(stderr_writer);
+    const stdin_is_tty = raw_mode.stdin_is_tty;
+    defer if (raw_mode.original_termios) |saved| {
+        std.posix.tcsetattr(Io.File.stdin().handle, .NOW, saved) catch |err| {
             stderr_writer.print("Error: Failed to restore stdin settings ({s})\n", .{@errorName(err)}) catch {};
             stderr_writer.flush() catch {};
         };
@@ -301,37 +506,13 @@ pub fn main(init: std.process.Init) !void {
         clearSocketPath(io, SOCKET_PATH) catch {};
     }
 
-    const ui_candidates = [_][]const u8{ "tui", "../tui", "../../tui" };
     // Step 6: Resolve TUI working directory from common launch locations.
-    const ui_cwd: ?[]const u8 = blk: {
-        for (ui_candidates) |candidate| {
-            if (Dir.cwd().openDir(io, candidate, .{})) |dir| {
-                dir.close(io);
-                break :blk candidate;
-            } else |_| {}
-        }
-        break :blk null;
-    };
+    const ui_cwd = findUiCwd(io);
 
     if (std.process.can_spawn and ui_cwd != null) {
         // Step 7: Prepare Unix socket server for TUI <-> core IPC bridge.
-        clearSocketPath(io, SOCKET_PATH) catch |err| {
-            try stderr_writer.print("Error: Failed to clear stale socket ({s})\n", .{@errorName(err)});
-            try stderr_writer.flush();
-            std.process.exit(1);
-        };
-
-        const socket_address = std.Io.net.UnixAddress.init(SOCKET_PATH) catch |err| {
-            try stderr_writer.print("Error: Invalid socket path ({s})\n", .{@errorName(err)});
-            try stderr_writer.flush();
-            std.process.exit(1);
-        };
-
-        socket_server = std.Io.net.UnixAddress.listen(&socket_address, io, .{}) catch |err| {
-            try stderr_writer.print("Error: Failed to listen on unix socket ({s})\n", .{@errorName(err)});
-            try stderr_writer.flush();
-            std.process.exit(1);
-        };
+        const server_ctx = try setupSocket(io, stderr_writer, SOCKET_PATH);
+        socket_server = server_ctx.server;
     }
 
     if (std.process.can_spawn) {
@@ -401,130 +582,23 @@ pub fn main(init: std.process.Init) !void {
     // - apply commands
     // - advance timer
     // - emit projection updates
-    while (true) {
-        var pollfds: [2]std.posix.pollfd = undefined;
-        var poll_count: usize = 0;
-        const read_stdin = socket_stream == null;
+    runEventLoop(
+        allocator,
+        io,
+        stderr_writer,
+        stdout_writer,
+        stdin_is_tty,
+        &stdin_reader.interface,
+        &socket_reader.interface,
+        &socket_writer.interface,
+        &countdown_timer,
+        total_duration_seconds,
+        &timer_finished_notified,
+        &socket_stream,
+        tick_duration,
+    );
 
-        if (read_stdin) {
-            pollfds[poll_count] = .{
-                .fd = Io.File.stdin().handle,
-                .events = std.posix.POLL.IN,
-                .revents = 0,
-            };
-            poll_count += 1;
-        }
-
-        if (socket_stream) |stream| {
-            pollfds[poll_count] = .{
-                .fd = stream.socket.handle,
-                .events = std.posix.POLL.IN,
-                .revents = 0,
-            };
-            poll_count += 1;
-        }
-
-        if (poll_count > 0) {
-            _ = std.posix.poll(pollfds[0..poll_count], 0) catch |err| {
-                try stderr_writer.print("Error: Failed to poll descriptors ({s})\n", .{@errorName(err)});
-                try stderr_writer.flush();
-                std.process.exit(1);
-            };
-        }
-
-        if (read_stdin and poll_count > 0 and (pollfds[0].revents & std.posix.POLL.IN) != 0) {
-            stdin_reader.interface.fillMore() catch |err| switch (err) {
-                error.EndOfStream => {},
-                error.ReadFailed => {
-                    try stderr_writer.print("Error: Failed to read stdin ({s})\n", .{@errorName(err)});
-                    try stderr_writer.flush();
-                    std.process.exit(1);
-                },
-            };
-        }
-
-        if (socket_stream != null and poll_count > 0) {
-            const socket_index: usize = if (read_stdin) 1 else 0;
-            if ((pollfds[socket_index].revents & std.posix.POLL.IN) != 0) {
-                socket_reader.interface.fillMore() catch |err| switch (err) {
-                    error.EndOfStream => {
-                        if (socket_stream) |stream| {
-                            var copy = stream;
-                            copy.close(io);
-                        }
-                        socket_stream = null;
-                    },
-                    error.ReadFailed => {
-                        try stderr_writer.print("Error: Failed to read socket ({s})\n", .{@errorName(err)});
-                        try stderr_writer.flush();
-                        std.process.exit(1);
-                    },
-                };
-            }
-        }
-
-        if (stdin_reader.interface.bufferedLen() > 0) {
-            // Fallback command path when TUI socket is unavailable.
-            if (try handleStdinInput(allocator, &stdin_reader.interface, stdin_is_tty)) {
-                if (socket_stream != null) {
-                    try ipc.sendExit(allocator, &socket_writer.interface);
-                    try socket_writer.interface.flush();
-                }
-                return;
-            }
-        }
-
-        if (socket_stream != null and socket_reader.interface.bufferedLen() > 0) {
-            // Primary command path from TUI command plane.
-            if (try handleSocketCommands(
-                allocator,
-                io,
-                &countdown_timer,
-                total_duration_seconds,
-                &timer_finished_notified,
-                &socket_reader.interface,
-                &socket_writer.interface,
-            )) {
-                try ipc.sendExit(allocator, &socket_writer.interface);
-                try socket_writer.interface.flush();
-                return;
-            }
-        }
-
-        countdown_timer.update(io);
-
-        if (socket_stream) |_| {
-            sendTimerProjection(
-                allocator,
-                &socket_writer.interface,
-                &countdown_timer,
-                total_duration_seconds,
-                &timer_finished_notified,
-            ) catch |err| {
-                try stderr_writer.print("Error: Failed to send socket timer event ({s})\n", .{@errorName(err)});
-                try stderr_writer.flush();
-                std.process.exit(1);
-            };
-        } else {
-            sendTimerProjection(
-                allocator,
-                stdout_writer,
-                &countdown_timer,
-                total_duration_seconds,
-                &timer_finished_notified,
-            ) catch |err| {
-                try stderr_writer.print("Error: Failed to send timer event ({s})\n", .{@errorName(err)});
-                try stderr_writer.flush();
-                std.process.exit(1);
-            };
-        }
-
-        Io.Clock.Duration.sleep(tick_duration, io) catch |err| {
-            try stderr_writer.print("Error: Failed to sleep ({s})\n", .{@errorName(err)});
-            try stderr_writer.flush();
-            std.process.exit(1);
-        };
-    }
+    // This code is unreachable as runEventLoop() exits via std.process.exit()
 }
 
 test "configErrorMessage - mapping" {
