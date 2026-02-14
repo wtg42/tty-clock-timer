@@ -303,13 +303,10 @@ pub fn updateTimer(
     total_duration: u32,
     status: []const u8,
 ) !void {
-    // Duplicate status string for the message payload
-    const status_dup = try allocator.dupe(u8, status);
-    defer allocator.free(status_dup);
     try sendMessage(allocator, writer, Message{ .update_timer = .{
         .remaining_seconds = remaining_seconds,
         .total_duration = total_duration,
-        .status = status_dup,
+        .status = status,
     } });
 }
 
