@@ -294,24 +294,6 @@ pub fn sendMessage(allocator: std.mem.Allocator, writer: *Io.Writer, message: Me
     try writer.writeByte('\n');
 }
 
-/// Reads one line and parses as message.
-/// Fallback: if JSON parsing fails and line is just "q", treat as keyboard quit command.
-/// This enables simple keyboard input without JSON formatting in interactive mode.
-pub fn receiveAndFilterMessage(allocator: std.mem.Allocator, reader: *Io.Reader) !Message {
-    const line = try reader.takeDelimiter('\n') orelse return error.EndOfInput;
-    // Try JSON parsing first
-    if (parseMessage(allocator, line)) |msg| {
-        return msg;
-    } else |_| {
-        // Fallback: raw "q" becomes keyboard_input message
-        const trimmed = std.mem.trim(u8, line, " \t\r\n");
-        if (std.mem.eql(u8, trimmed, "q")) {
-            return Message{ .keyboard_input = .{ .key = try allocator.dupe(u8, "q") } };
-        }
-        return error.InvalidInput;
-    }
-}
-
 /// Sends `update_timer` message with current timer state.
 /// Typically called every ~1 second in the main event loop.
 pub fn updateTimer(
@@ -366,7 +348,7 @@ pub fn handleKeyboardInput(key: []const u8) bool {
     return std.mem.eql(u8, key, "q");
 }
 
-/// Test parsing a command message with id and command fields.
+// Test parsing a command message with id and command fields.
 test "ipc/parseMessage - command roundtrip" {
     const allocator = std.testing.allocator;
     const json = "{\"type\":\"command\",\"id\":\"1\",\"command\":\"pause\"}";
@@ -378,7 +360,7 @@ test "ipc/parseMessage - command roundtrip" {
     try std.testing.expectEqualStrings("pause", message.command.command);
 }
 
-/// Test parsing a successful command result where error field is null.
+// Test parsing a successful command result where error field is null.
 test "ipc/parseMessage - command_result with null error" {
     const allocator = std.testing.allocator;
     const json = "{\"type\":\"command_result\",\"id\":\"1\",\"success\":true,\"error\":null}";
@@ -390,7 +372,7 @@ test "ipc/parseMessage - command_result with null error" {
     try std.testing.expect(message.command_result.@"error" == null);
 }
 
-/// Test Command.parse() correctly maps string names to enum values.
+// Test Command.parse() correctly maps string names to enum values.
 test "ipc/command parser" {
     try std.testing.expectEqual(@as(?Command, .pause), Command.parse("pause"));
     try std.testing.expectEqual(@as(?Command, .@"resume"), Command.parse("resume"));
