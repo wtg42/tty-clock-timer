@@ -1,8 +1,5 @@
-# hono-command-plane Specification
+## MODIFIED Requirements
 
-## Purpose
-TBD - created by syncing change hono-rpc-unix-socket-ipc. Update Purpose after sync.
-## Requirements
 ### Requirement: OpenTUI 使用 in-process RPC 發送命令
 系統 MUST 提供 Node 進程內的 Hono command endpoint，讓 OpenTUI 可透過 in-process `fetch/RPC` 發送控制命令，而不直接耦合底層 IPC transport。命令來源 MUST 來自已辨識的使用者鍵盤事件，且 MUST NOT 由未解析的原始 stdin 片段直接觸發。
 
@@ -24,4 +21,3 @@ TBD - created by syncing change hono-rpc-unix-socket-ipc. Update Purpose after s
 #### Scenario: 長按導致重複命令時維持可讀性
 - **WHEN** 使用者持續按壓導致同一不合法命令短時間重複送出
 - **THEN** UI 層 MUST 具備抑制策略以避免錯誤訊息連續覆寫造成畫面可讀性下降
-

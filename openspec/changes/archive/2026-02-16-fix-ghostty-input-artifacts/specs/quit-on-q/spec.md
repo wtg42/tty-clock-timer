@@ -1,8 +1,5 @@
-# quit-on-q Specification
+## MODIFIED Requirements
 
-## Purpose
-TBD - created by syncing change fix-q-quit. Update Purpose after archive.
-## Requirements
 ### Requirement: 單鍵 q 立即退出
 系統 MUST 在互動式 stdin（TTY）下，使用者按下單一字元 `q` 時立即結束程式，且不需要 Enter；此行為在計時進行中與計時結束後一致。退出流程 MUST 還原終端互動狀態，不得留下影響選字或後續互動的殘留設定。
 
@@ -17,4 +14,3 @@ TBD - created by syncing change fix-q-quit. Update Purpose after archive.
 #### Scenario: 退出後終端可正常操作
 - **WHEN** 程式因 `q` 指令退出
 - **THEN** 使用者離開程式後 MUST 可正常選取終端文字與輸入指令
-

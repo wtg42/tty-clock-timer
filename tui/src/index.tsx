@@ -1,11 +1,17 @@
 import { TextAttributes } from "@opentui/core";
-import { render } from "@opentui/solid";
-import { createSignal, onMount } from "solid-js";
-import { useTimeline } from "@opentui/solid";
+import { render, useKeyboard, useRenderer, useTimeline } from "@opentui/solid";
+import { createEffect, createSignal, onCleanup, onMount } from "solid-js";
 
 import { createCommandPlane } from "./command_plane.ts";
 import { type CommandName, type CommandResponse } from "./protocol.ts";
 import { createTimerStore } from "./store.ts";
+import {
+  type IssuedCommandRecord,
+  commandFromKey,
+  formatRemaining,
+  shouldSkipByDedup,
+  shouldSkipByStatus,
+} from "./ui_logic.ts";
 import { UnixSocketAdapter } from "./unix_socket_adapter.ts";
 
 // Step 1: Read CLI socket override; fallback to default core socket path.
@@ -28,86 +34,28 @@ const { execute: sendCommand } = createCommandPlane((command) => adapter.sendCom
 const [state, setState] = createSignal(store.getState());
 const [lastCommandError, setLastCommandError] = createSignal<string | null>(null);
 
-store.subscribe((nextState) => setState(nextState));
-adapter.onEvent((event) => store.applyEvent(event));
-
-// Step 4: Convert seconds projection to MM:SS for terminal display.
-const formatRemaining = (seconds: number | null) => {
-  if (seconds === null) return "--:--";
-  const minutes = Math.floor(seconds / 60);
-  const remaining = seconds % 60;
-  return `${minutes.toString().padStart(2, "0")}:${remaining.toString().padStart(2, "0")}`;
-};
-
-// Step 5: Map single-key shortcuts to command names understood by core.
-const commandFromKey = (key: string): CommandName | null => {
-  switch (key) {
-    case "p":
-      return "pause";
-    case "r":
-      return "resume";
-    case "s":
-      return "reset";
-    case "q":
-      return "quit";
-    default:
-      return null;
-  }
-};
-
-// Step 6: Send command through command plane and update UI error state.
-const issueCommand = async (command: CommandName) => {
-  let response: CommandResponse;
-  try {
-    response = await sendCommand(command);
-  } catch (error) {
-    setLastCommandError(error instanceof Error ? error.message : "command_failed");
-    return;
-  }
-
-  if (!response.ok) {
-    setLastCommandError(response.error);
-    return;
-  }
-
-  setLastCommandError(null);
-
-  if (command === "quit") {
-    // TUI exits after core confirms quit command.
-    process.exit(0);
-  }
-};
-
-// Step 7: Subscribe to raw stdin key stream and dispatch mapped commands.
-process.stdin.setEncoding("utf8");
-process.stdin.on("data", (chunk: string | Buffer) => {
-  const value = typeof chunk === "string" ? chunk : chunk.toString("utf8");
-  for (const char of value) {
-    const command = commandFromKey(char.trim());
-    if (!command) continue;
-    void issueCommand(command);
-  }
-});
+const COMMAND_DEDUP_WINDOW_MS = 250;
+const ERROR_DEDUP_WINDOW_MS = 1000;
 
 const wait = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
-// Step 8: Retry socket connection until core IPC server is ready.
-const connectWithRetry = async () => {
-  while (true) {
+// Step 6: Retry socket connection until core IPC server is ready.
+const connectWithRetry = async (options: {
+  shouldStop: () => boolean;
+  setError: (message: string | null) => void;
+}) => {
+  while (!options.shouldStop()) {
     try {
       await adapter.connect();
-      setLastCommandError(null);
+      options.setError(null);
       return;
     } catch (error) {
       const message = error instanceof Error ? error.message : "socket_connect_failed";
-      setLastCommandError(message);
+      options.setError(message);
       await wait(500);
     }
   }
 };
-
-// Kick off background connection loop immediately on process start.
-void connectWithRetry();
 
 const FinishedView = () => {
   let containerRef: any;
@@ -146,8 +94,129 @@ const FinishedView = () => {
   );
 };
 
-render(() => {
-  // Step 9: Render either countdown view or finished animation view.
+const App = () => {
+  // Step 7: Bind OpenTUI keyboard events and enforce graceful shutdown.
+  const renderer = useRenderer();
+
+  let shuttingDown = false;
+  let commandInFlight = false;
+  let projectedStatus = state().status;
+  let lastIssuedCommand: IssuedCommandRecord | null = null;
+  let lastError: { message: string; at: number } | null = null;
+
+  const setCommandError = (message: string | null) => {
+    if (message === null) {
+      lastError = null;
+      setLastCommandError(null);
+      return;
+    }
+
+    if (message === "invalid_state") {
+      setLastCommandError(null);
+      return;
+    }
+
+    const now = Date.now();
+    if (lastError && lastError.message === message && now - lastError.at < ERROR_DEDUP_WINDOW_MS) {
+      return;
+    }
+
+    lastError = { message, at: now };
+    setLastCommandError(message);
+  };
+
+  const shutdown = async () => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+
+    await adapter.disconnect();
+
+    renderer.destroy();
+
+    const forceExit = setTimeout(() => {
+      process.exit(0);
+    }, 50);
+    forceExit.unref();
+  };
+
+  const issueCommand = async (command: CommandName) => {
+    if (shuttingDown) return;
+    if (commandInFlight) return;
+    if (shouldSkipByStatus(projectedStatus, command)) return;
+
+    const dedupDecision = shouldSkipByDedup(
+      lastIssuedCommand,
+      command,
+      Date.now(),
+      COMMAND_DEDUP_WINDOW_MS,
+    );
+    lastIssuedCommand = dedupDecision.next;
+    if (dedupDecision.skip) return;
+
+    commandInFlight = true;
+
+    let response: CommandResponse;
+    try {
+      response = await sendCommand(command);
+    } catch (error) {
+      setCommandError(error instanceof Error ? error.message : "command_failed");
+      commandInFlight = false;
+      return;
+    }
+
+    if (!response.ok) {
+      setCommandError(response.error);
+      commandInFlight = false;
+      return;
+    }
+
+    if (command === "pause") {
+      projectedStatus = "paused";
+    } else if (command === "resume" || command === "reset") {
+      projectedStatus = "running";
+    } else if (command === "quit") {
+      projectedStatus = "finished";
+    }
+
+    setCommandError(null);
+    commandInFlight = false;
+
+    if (command === "quit") {
+      await shutdown();
+    }
+  };
+
+  useKeyboard((key) => {
+    if (shuttingDown) return;
+    if (key.eventType !== "press") return;
+
+    const command = commandFromKey(key.name);
+    if (!command) return;
+
+    void issueCommand(command);
+  });
+
+  const unsubscribeStore = store.subscribe((nextState) => setState(nextState));
+  const unsubscribeEvents = adapter.onEvent((event) => store.applyEvent(event));
+  onCleanup(() => {
+    unsubscribeStore();
+    unsubscribeEvents();
+  });
+
+  void connectWithRetry({
+    shouldStop: () => shuttingDown,
+    setError: setCommandError,
+  });
+
+  createEffect(() => {
+    projectedStatus = state().status;
+
+    if (state().shouldExit) {
+      void shutdown();
+    }
+  });
+
+  // Step 8: Render either countdown view or finished animation view.
   return (
     <box alignItems="center" justifyContent="center" flexGrow={1} flexDirection="column">
       {!state().isFinished ? (
@@ -166,4 +235,6 @@ render(() => {
       ) : null}
     </box>
   );
-});
+};
+
+render(() => <App />);

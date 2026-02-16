@@ -10,8 +10,6 @@ const std = @import("std");
 pub const Config = struct {
     /// Countdown duration in seconds.
     duration_seconds: u32,
-    /// Reserved for future mode flags.
-    reset_mode: bool,
     /// If true, caller should print usage and exit.
     show_help: bool,
 };
@@ -60,7 +58,6 @@ pub fn parseArgs(allocator: std.mem.Allocator, init: std.process.Init.Minimal) !
 pub fn parseArgsFromSlice(args: []const []const u8) !Config {
     var config = Config{
         .duration_seconds = 0,
-        .reset_mode = false,
         .show_help = false,
     };
 
@@ -127,7 +124,6 @@ test "parseArgsFromSlice - valid minutes" {
     const args = &[_][]const u8{ "--minutes", "25" };
     const config = try parseArgsFromSlice(args);
     try std.testing.expectEqual(@as(u32, 1500), config.duration_seconds);
-    try std.testing.expectEqual(false, config.reset_mode);
     try std.testing.expectEqual(false, config.show_help);
 }
 
@@ -135,7 +131,6 @@ test "parseArgsFromSlice - valid seconds" {
     const args = &[_][]const u8{ "--seconds", "90" };
     const config = try parseArgsFromSlice(args);
     try std.testing.expectEqual(@as(u32, 90), config.duration_seconds);
-    try std.testing.expectEqual(false, config.reset_mode);
     try std.testing.expectEqual(false, config.show_help);
 }
 
@@ -143,7 +138,6 @@ test "parseArgsFromSlice - help flag" {
     const args = &[_][]const u8{"--help"};
     const config = try parseArgsFromSlice(args);
     try std.testing.expectEqual(@as(u32, 0), config.duration_seconds);
-    try std.testing.expectEqual(false, config.reset_mode);
     try std.testing.expectEqual(true, config.show_help);
 }
 
@@ -151,7 +145,6 @@ test "parseArgsFromSlice - short minutes" {
     const args = &[_][]const u8{ "-m", "5" };
     const config = try parseArgsFromSlice(args);
     try std.testing.expectEqual(@as(u32, 300), config.duration_seconds);
-    try std.testing.expectEqual(false, config.reset_mode);
     try std.testing.expectEqual(false, config.show_help);
 }
 
@@ -159,7 +152,6 @@ test "parseArgsFromSlice - short seconds" {
     const args = &[_][]const u8{ "-s", "30" };
     const config = try parseArgsFromSlice(args);
     try std.testing.expectEqual(@as(u32, 30), config.duration_seconds);
-    try std.testing.expectEqual(false, config.reset_mode);
     try std.testing.expectEqual(false, config.show_help);
 }
 
@@ -167,7 +159,6 @@ test "parseArgsFromSlice - short help" {
     const args = &[_][]const u8{"-h"};
     const config = try parseArgsFromSlice(args);
     try std.testing.expectEqual(@as(u32, 0), config.duration_seconds);
-    try std.testing.expectEqual(false, config.reset_mode);
     try std.testing.expectEqual(true, config.show_help);
 }
 
@@ -175,7 +166,6 @@ test "parseArgsFromSlice - empty args shows help" {
     const args = &[_][]const u8{};
     const config = try parseArgsFromSlice(args);
     try std.testing.expectEqual(@as(u32, 0), config.duration_seconds);
-    try std.testing.expectEqual(false, config.reset_mode);
     try std.testing.expectEqual(true, config.show_help);
 }
 

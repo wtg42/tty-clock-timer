@@ -7,7 +7,21 @@
 ```bash
 bun install
 bun run dev
+bun test
 ```
+
+## Unit test 範圍（本次）
+
+- 僅包含 function-level unit tests。
+- 測試檔案與目標函式同目錄，採 `*.test.ts` 命名（例如 `store.test.ts`）。
+- 測試案例命名採「`函式/情境`」風格，方便定位失敗案例。
+- 本次**不包含** feature tests（跨模組流程、整體 UI 互動、E2E）。
+
+### 首批目標函式
+
+- `ui_logic.ts`: `formatRemaining`、`commandFromKey`、`shouldSkipByStatus`、`shouldSkipByDedup`
+- `protocol.ts`: `isCoreEvent`、`isCommandResultMessage`
+- `store.ts`: `createTimerStore` 的 event projection 行為
 
 ## 目前行為
 
