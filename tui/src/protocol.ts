@@ -1,3 +1,9 @@
+/**
+ * @fileoverview IPC protocol contracts shared by TUI modules.
+ *
+ * Defines command/event payload shapes and runtime type guards for validating
+ * decoded JSON messages from the Unix socket stream.
+ */
 export type CommandName = "pause" | "resume" | "reset" | "quit";
 
 export type CoreEvent = TimerUpdateMessage | TimerFinishedMessage | ExitMessage;
@@ -35,6 +41,9 @@ export type CommandResponse =
   | { ok: true; command: CommandName }
   | { ok: false; command: string; error: string };
 
+/**
+ * Validates whether an unknown payload is a supported core event.
+ */
 export const isCoreEvent = (value: unknown): value is CoreEvent => {
   if (!value || typeof value !== "object") return false;
   const record = value as Record<string, unknown>;
@@ -58,6 +67,9 @@ export const isCoreEvent = (value: unknown): value is CoreEvent => {
   return false;
 };
 
+/**
+ * Validates command-result messages paired by command id.
+ */
 export const isCommandResultMessage = (
   value: unknown,
 ): value is CommandResultMessage => {

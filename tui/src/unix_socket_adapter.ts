@@ -1,3 +1,9 @@
+/**
+ * @fileoverview Unix socket transport for core IPC.
+ *
+ * Handles line-delimited JSON framing, command request/response correlation,
+ * and event fan-out to TUI subscribers.
+ */
 import net from "node:net";
 
 import {
@@ -28,6 +34,9 @@ export class UnixSocketAdapter {
     this.socketPath = socketPath;
   }
 
+  /**
+   * Establishes a socket connection to the configured Unix socket path.
+   */
   async connect(): Promise<void> {
     if (this.socket) return;
     if (this.connectInFlight) {
@@ -79,6 +88,9 @@ export class UnixSocketAdapter {
     }
   }
 
+  /**
+   * Gracefully closes the socket and rejects unresolved command promises.
+   */
   async disconnect(): Promise<void> {
     const socket = this.socket;
     this.socket = null;
@@ -112,11 +124,17 @@ export class UnixSocketAdapter {
     this.rejectAllPending(new Error("Unix socket closed"));
   }
 
+  /**
+   * Registers a core-event listener.
+   */
   onEvent(listener: (event: CoreEvent) => void): () => void {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
   }
 
+  /**
+   * Sends a command to core and resolves when its result arrives.
+   */
   async sendCommand(command: CommandName): Promise<CommandResponse> {
     if (!this.socket) {
       return { ok: false, command, error: "socket_not_connected" };

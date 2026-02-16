@@ -1,3 +1,6 @@
+/**
+ * @fileoverview Unit tests for timer store state projection.
+ */
 import { describe, expect, test } from "bun:test";
 
 import { createTimerStore } from "./store.ts";

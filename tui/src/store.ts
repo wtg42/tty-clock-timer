@@ -1,3 +1,9 @@
+/**
+ * @fileoverview Local timer view-state store.
+ *
+ * The store projects inbound core events into an immutable snapshot model used
+ * by the UI layer, and provides a simple subscribe API.
+ */
 import type { CoreEvent } from "./protocol.ts";
 
 export type TimerViewState = {
@@ -14,6 +20,9 @@ const initialState: TimerViewState = {
   shouldExit: false,
 };
 
+/**
+ * Creates an in-memory store that maps `CoreEvent` to `TimerViewState`.
+ */
 export const createTimerStore = () => {
   let state: TimerViewState = { ...initialState };
   const subscribers = new Set<(nextState: TimerViewState) => void>();

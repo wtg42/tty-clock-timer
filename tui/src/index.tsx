@@ -1,3 +1,12 @@
+/**
+ * @fileoverview OpenTUI entrypoint for tty-clock-timer.
+ *
+ * Responsibilities:
+ * - Connect to the Zig core process via Unix socket IPC.
+ * - Project core events into UI state.
+ * - Map keyboard input to timer commands.
+ * - Render countdown and finished views.
+ */
 import { TextAttributes } from "@opentui/core";
 import { render, useKeyboard, useRenderer, useTimeline } from "@opentui/solid";
 import { createEffect, createSignal, onCleanup, onMount } from "solid-js";
@@ -14,7 +23,9 @@ import {
 } from "./ui_logic.ts";
 import { UnixSocketAdapter } from "./unix_socket_adapter.ts";
 
-// Step 1: Read CLI socket override; fallback to default core socket path.
+/**
+ * Reads the optional `--socket-path` CLI flag, or returns the default path.
+ */
 const parseSocketPath = (): string => {
   const socketFlag = "--socket-path";
   const index = process.argv.findIndex((value) => value === socketFlag);
@@ -24,13 +35,13 @@ const parseSocketPath = (): string => {
   return "/tmp/tty-clock-timer.sock";
 };
 
-// Step 2: Build communication and state primitives.
+// Build communication and state primitives.
 const socketPath = parseSocketPath();
 const adapter = new UnixSocketAdapter(socketPath);
 const store = createTimerStore();
 const { execute: sendCommand } = createCommandPlane((command) => adapter.sendCommand(command));
 
-// Step 3: Bridge store state into Solid reactive signals.
+// Bridge store state into Solid reactive signals.
 const [state, setState] = createSignal(store.getState());
 const [lastCommandError, setLastCommandError] = createSignal<string | null>(null);
 
@@ -39,7 +50,9 @@ const ERROR_DEDUP_WINDOW_MS = 1000;
 
 const wait = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
-// Step 6: Retry socket connection until core IPC server is ready.
+/**
+ * Repeatedly attempts IPC connection until success or shutdown.
+ */
 const connectWithRetry = async (options: {
   shouldStop: () => boolean;
   setError: (message: string | null) => void;
@@ -95,7 +108,7 @@ const FinishedView = () => {
 };
 
 const App = () => {
-  // Step 7: Bind OpenTUI keyboard events and enforce graceful shutdown.
+  // Bind OpenTUI keyboard events and enforce graceful shutdown.
   const renderer = useRenderer();
 
   let shuttingDown = false;
@@ -216,7 +229,7 @@ const App = () => {
     }
   });
 
-  // Step 8: Render either countdown view or finished animation view.
+  // Render either countdown view or finished animation view.
   return (
     <box alignItems="center" justifyContent="center" flexGrow={1} flexDirection="column">
       {!state().isFinished ? (

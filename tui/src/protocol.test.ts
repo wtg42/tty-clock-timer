@@ -1,3 +1,6 @@
+/**
+ * @fileoverview Unit tests for protocol runtime guards.
+ */
 import { describe, expect, test } from "bun:test";
 
 import { isCommandResultMessage, isCoreEvent } from "./protocol.ts";

@@ -1,9 +1,19 @@
+/**
+ * @fileoverview HTTP-like command plane for local command dispatch.
+ *
+ * This module wraps command execution behind a Hono app so the UI can use a
+ * single request path (`/commands/:command`) and receive normalized
+ * `CommandResponse` payloads.
+ */
 import { Hono } from "hono";
 
 import type { CommandName, CommandResponse } from "./protocol.ts";
 
 type CommandSender = (command: CommandName) => Promise<CommandResponse>;
 
+/**
+ * Creates an in-process command router and an execute helper.
+ */
 export const createCommandPlane = (sendCommand: CommandSender) => {
   const app = new Hono();
 

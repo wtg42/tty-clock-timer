@@ -1,3 +1,6 @@
+/**
+ * @fileoverview Unit tests for pure UI logic helpers.
+ */
 import { describe, expect, test } from "bun:test";
 
 import {
