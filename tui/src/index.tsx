@@ -15,9 +15,9 @@ import { createCommandPlane } from "./command_plane.ts";
 import { type CommandName, type CommandResponse } from "./protocol.ts";
 import { createTimerStore } from "./store.ts";
 import {
-  type IssuedCommandRecord,
   commandFromKey,
   formatRemaining,
+  type IssuedCommandRecord,
   shouldSkipByDedup,
   shouldSkipByStatus,
 } from "./ui_logic.ts";
@@ -39,16 +39,21 @@ const parseSocketPath = (): string => {
 const socketPath = parseSocketPath();
 const adapter = new UnixSocketAdapter(socketPath);
 const store = createTimerStore();
-const { execute: sendCommand } = createCommandPlane((command) => adapter.sendCommand(command));
+const { execute: sendCommand } = createCommandPlane((command) =>
+  adapter.sendCommand(command)
+);
 
 // Bridge store state into Solid reactive signals.
 const [state, setState] = createSignal(store.getState());
-const [lastCommandError, setLastCommandError] = createSignal<string | null>(null);
+const [lastCommandError, setLastCommandError] = createSignal<string | null>(
+  null,
+);
 
 const COMMAND_DEDUP_WINDOW_MS = 250;
 const ERROR_DEDUP_WINDOW_MS = 1000;
 
-const wait = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+const wait = (ms: number) =>
+  new Promise<void>((resolve) => setTimeout(resolve, ms));
 
 /**
  * Repeatedly attempts IPC connection until success or shutdown.
@@ -63,7 +68,9 @@ const connectWithRetry = async (options: {
       options.setError(null);
       return;
     } catch (error) {
-      const message = error instanceof Error ? error.message : "socket_connect_failed";
+      const message = error instanceof Error
+        ? error.message
+        : "socket_connect_failed";
       options.setError(message);
       await wait(500);
     }
@@ -77,9 +84,21 @@ const FinishedView = () => {
   const timeline = useTimeline({ autoplay: true });
 
   onMount(() => {
-    timeline.add(containerRef, { opacity: 1, duration: 800, ease: "outBounce" }, 0);
-    timeline.add(titleRef, { translateY: -2, duration: 100, ease: "outElastic" }, 800);
-    timeline.add(titleRef, { translateY: 0, duration: 100, ease: "outBounce" }, 900);
+    timeline.add(
+      containerRef,
+      { opacity: 1, duration: 800, ease: "outBounce" },
+      0,
+    );
+    timeline.add(titleRef, {
+      translateY: -2,
+      duration: 100,
+      ease: "outElastic",
+    }, 800);
+    timeline.add(
+      titleRef,
+      { translateY: 0, duration: 100, ease: "outBounce" },
+      900,
+    );
     timeline.add(
       containerRef,
       {
@@ -130,7 +149,10 @@ const App = () => {
     }
 
     const now = Date.now();
-    if (lastError && lastError.message === message && now - lastError.at < ERROR_DEDUP_WINDOW_MS) {
+    if (
+      lastError && lastError.message === message &&
+      now - lastError.at < ERROR_DEDUP_WINDOW_MS
+    ) {
       return;
     }
 
@@ -172,7 +194,9 @@ const App = () => {
     try {
       response = await sendCommand(command);
     } catch (error) {
-      setCommandError(error instanceof Error ? error.message : "command_failed");
+      setCommandError(
+        error instanceof Error ? error.message : "command_failed",
+      );
       commandInFlight = false;
       return;
     }
@@ -231,21 +255,47 @@ const App = () => {
 
   // Render either countdown view or finished animation view.
   return (
-    <box alignItems="center" justifyContent="center" flexGrow={1} flexDirection="column">
-      {!state().isFinished ? (
-        <box justifyContent="center" alignItems="center" flexDirection="column">
-          <ascii_font font="tiny" text="TTY Clock Timer" />
-          <text attributes={TextAttributes.BOLD}>{formatRemaining(state().remainingSeconds)}</text>
-          <text attributes={TextAttributes.DIM}>Status: {state().status}</text>
-          <text attributes={TextAttributes.DIM}>Keys: p pause / r resume / s reset / q quit</text>
-        </box>
-      ) : (
-        <FinishedView />
-      )}
+    <box
+      alignItems="center"
+      justifyContent="center"
+      flexGrow={1}
+      flexDirection="column"
+    >
+      {!state().isFinished
+        ? (
+          <box
+            justifyContent="center"
+            alignItems="center"
+            flexDirection="column"
+          >
+            <ascii_font
+              font="tiny"
+              text="TTY Clock Timer"
+            />
+            <ascii_font
+              font="tiny"
+              text={formatRemaining(state().remainingSeconds)}
+              margin={1}
+            />
+            <box flexDirection="column" alignItems="center">
+              <text attributes={TextAttributes.DIM}>
+                Status: {state().status}
+              </text>
+              <text attributes={TextAttributes.DIM}>
+                Keys: p pause / r resume / s reset / q quit
+              </text>
+            </box>
+          </box>
+        )
+        : <FinishedView />}
 
-      {lastCommandError() ? (
-        <text attributes={TextAttributes.BOLD}>Command error: {lastCommandError()}</text>
-      ) : null}
+      {lastCommandError()
+        ? (
+          <text attributes={TextAttributes.BOLD}>
+            Command error: {lastCommandError()}
+          </text>
+        )
+        : null}
     </box>
   );
 };
