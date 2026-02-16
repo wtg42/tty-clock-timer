@@ -266,6 +266,16 @@ fn findUiCwd(io: Io) ?[]const u8 {
     return null;
 }
 
+/// Allows UI child a brief graceful shutdown window, then reaps/forces cleanup.
+fn teardownUiChild(io: Io, child: *std.process.Child) void {
+    const grace = Io.Clock.Duration{ .clock = .awake, .raw = Io.Duration.fromMilliseconds(300) };
+    Io.Clock.Duration.sleep(grace, io) catch {};
+
+    _ = child.wait(io) catch {
+        child.kill(io);
+    };
+}
+
 /// Context for Unix socket server management.
 const SocketServerContext = struct {
     server: std.Io.net.Server,
@@ -493,7 +503,7 @@ pub fn main(init: std.process.Init) !void {
     };
 
     var ui_child: ?std.process.Child = null;
-    defer if (ui_child) |*child| child.kill(io);
+    defer if (ui_child) |*child| teardownUiChild(io, child);
 
     var socket_server: ?std.Io.net.Server = null;
     var socket_stream: ?std.Io.net.Stream = null;

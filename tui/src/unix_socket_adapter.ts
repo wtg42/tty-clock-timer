@@ -18,6 +18,7 @@ type PendingResolver = {
 export class UnixSocketAdapter {
   private readonly socketPath: string;
   private socket: net.Socket | null = null;
+  private connectInFlight: Promise<void> | null = null;
   private readBuffer = "";
   private commandCounter = 0;
   private readonly pending = new Map<string, PendingResolver>();
@@ -29,8 +30,11 @@ export class UnixSocketAdapter {
 
   async connect(): Promise<void> {
     if (this.socket) return;
+    if (this.connectInFlight) {
+      return this.connectInFlight;
+    }
 
-    await new Promise<void>((resolve, reject) => {
+    this.connectInFlight = new Promise<void>((resolve, reject) => {
       const socket = net.createConnection({ path: this.socketPath });
       const timeout = setTimeout(() => {
         socket.destroy();
@@ -58,6 +62,7 @@ export class UnixSocketAdapter {
         });
         socket.on("close", () => {
           this.socket = null;
+          this.readBuffer = "";
           this.rejectAllPending(new Error("Unix socket closed"));
         });
         socket.on("error", (error) => {
@@ -66,6 +71,45 @@ export class UnixSocketAdapter {
         resolve();
       });
     });
+
+    try {
+      await this.connectInFlight;
+    } finally {
+      this.connectInFlight = null;
+    }
+  }
+
+  async disconnect(): Promise<void> {
+    const socket = this.socket;
+    this.socket = null;
+    this.readBuffer = "";
+
+    if (!socket) {
+      this.rejectAllPending(new Error("Unix socket closed"));
+      return;
+    }
+
+    await new Promise<void>((resolve) => {
+      let done = false;
+      const finish = () => {
+        if (done) return;
+        done = true;
+        resolve();
+      };
+
+      socket.once("close", finish);
+      socket.end();
+
+      const forceTimeout = setTimeout(() => {
+        if (!socket.destroyed) {
+          socket.destroy();
+        }
+        finish();
+      }, 200);
+      forceTimeout.unref();
+    });
+
+    this.rejectAllPending(new Error("Unix socket closed"));
   }
 
   onEvent(listener: (event: CoreEvent) => void): () => void {
