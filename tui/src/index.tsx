@@ -5,6 +5,13 @@ import { createEffect, createSignal, onCleanup, onMount } from "solid-js";
 import { createCommandPlane } from "./command_plane.ts";
 import { type CommandName, type CommandResponse } from "./protocol.ts";
 import { createTimerStore } from "./store.ts";
+import {
+  type IssuedCommandRecord,
+  commandFromKey,
+  formatRemaining,
+  shouldSkipByDedup,
+  shouldSkipByStatus,
+} from "./ui_logic.ts";
 import { UnixSocketAdapter } from "./unix_socket_adapter.ts";
 
 // Step 1: Read CLI socket override; fallback to default core socket path.
@@ -29,30 +36,6 @@ const [lastCommandError, setLastCommandError] = createSignal<string | null>(null
 
 const COMMAND_DEDUP_WINDOW_MS = 250;
 const ERROR_DEDUP_WINDOW_MS = 1000;
-
-// Step 4: Convert seconds projection to MM:SS for terminal display.
-const formatRemaining = (seconds: number | null) => {
-  if (seconds === null) return "--:--";
-  const minutes = Math.floor(seconds / 60);
-  const remaining = seconds % 60;
-  return `${minutes.toString().padStart(2, "0")}:${remaining.toString().padStart(2, "0")}`;
-};
-
-// Step 5: Map single-key shortcuts to command names understood by core.
-const commandFromKey = (key: string): CommandName | null => {
-  switch (key) {
-    case "p":
-      return "pause";
-    case "r":
-      return "resume";
-    case "s":
-      return "reset";
-    case "q":
-      return "quit";
-    default:
-      return null;
-  }
-};
 
 const wait = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
@@ -118,7 +101,7 @@ const App = () => {
   let shuttingDown = false;
   let commandInFlight = false;
   let projectedStatus = state().status;
-  let lastIssuedCommand: { command: CommandName; at: number } | null = null;
+  let lastIssuedCommand: IssuedCommandRecord | null = null;
   let lastError: { message: string; at: number } | null = null;
 
   const setCommandError = (message: string | null) => {
@@ -142,24 +125,6 @@ const App = () => {
     setLastCommandError(message);
   };
 
-  const shouldSkipByStatus = (command: CommandName) => {
-    const current = projectedStatus;
-    if (command === "pause") return current !== "running";
-    if (command === "resume") return current !== "paused";
-    return false;
-  };
-
-  const shouldSkipByDedup = (command: CommandName) => {
-    const now = Date.now();
-    if (lastIssuedCommand && lastIssuedCommand.command === command) {
-      if (now - lastIssuedCommand.at < COMMAND_DEDUP_WINDOW_MS) {
-        return true;
-      }
-    }
-    lastIssuedCommand = { command, at: now };
-    return false;
-  };
-
   const shutdown = async () => {
     if (shuttingDown) return;
     shuttingDown = true;
@@ -177,8 +142,16 @@ const App = () => {
   const issueCommand = async (command: CommandName) => {
     if (shuttingDown) return;
     if (commandInFlight) return;
-    if (shouldSkipByStatus(command)) return;
-    if (shouldSkipByDedup(command)) return;
+    if (shouldSkipByStatus(projectedStatus, command)) return;
+
+    const dedupDecision = shouldSkipByDedup(
+      lastIssuedCommand,
+      command,
+      Date.now(),
+      COMMAND_DEDUP_WINDOW_MS,
+    );
+    lastIssuedCommand = dedupDecision.next;
+    if (dedupDecision.skip) return;
 
     commandInFlight = true;
 
