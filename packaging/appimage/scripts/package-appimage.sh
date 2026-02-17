@@ -10,8 +10,21 @@ ASSETS_DIR="${ROOT_DIR}/packaging/appimage/assets"
 TUI_SRC_DIR="${ROOT_DIR}/tui"
 
 APPIMAGE_VERSION="${APPIMAGE_VERSION:-dev}"
-APPIMAGETOOL_BIN="${APPIMAGETOOL_BIN:-appimagetool}"
 APPIMAGE_NAME="tty-clock-timer-${APPIMAGE_VERSION}-linux-x86_64.AppImage"
+
+if [[ -n "${APPIMAGETOOL_BIN:-}" ]]; then
+  : # 使用者明確指定
+elif [[ -x "${ROOT_DIR}/packaging/tools/appimagetool.AppImage" ]]; then
+  APPIMAGETOOL_BIN="${ROOT_DIR}/packaging/tools/appimagetool.AppImage"
+elif command -v appimagetool &>/dev/null; then
+  APPIMAGETOOL_BIN="appimagetool"
+else
+  echo "[error] appimagetool not found." >&2
+  echo "  Option 1: Place it at packaging/tools/appimagetool.AppImage" >&2
+  echo "  Option 2: Set APPIMAGETOOL_BIN=/path/to/appimagetool" >&2
+  echo "  Download: https://github.com/AppImage/appimagetool/releases" >&2
+  exit 1
+fi
 APPIMAGE_PATH="${OUT_DIR}/${APPIMAGE_NAME}"
 
 if [[ ! -x "${STAGE_DIR}/usr/bin/tty_clock_timer" ]]; then
