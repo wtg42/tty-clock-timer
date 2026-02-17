@@ -11,6 +11,8 @@ permissions:
 jobs:
   release-appimage:
     runs-on: ubuntu-24.04
+    permissions:
+      contents: write
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -123,9 +125,29 @@ jobs:
             echo "metadata_file=${metadata_file}"
           } >> "${GITHUB_OUTPUT}"
 
+      - name: Validate release credentials
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [[ -z "${GH_TOKEN:-}" ]]; then
+            echo "::error title=Release stage failed::stage=upload (missing GITHUB_TOKEN)"
+            exit 1
+          fi
+
+          if ! gh api "repos/${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
+            echo "::error title=Release stage failed::stage=upload (token cannot access repository API)"
+            echo "Ensure repository Actions workflow permissions are set to Read and write."
+            exit 1
+          fi
+
       - name: Upload stage (GitHub Release assets)
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         shell: bash
         run: |
           set -euo pipefail
