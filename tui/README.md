@@ -83,7 +83,7 @@ Keyboard (p/r/s/q)
 - 支援按鍵：`p`（pause）、`r`（resume）、`s`（reset）、`q`（quit）。
 - 命令路徑：`index.tsx` -> `command_plane.ts` -> `unix_socket_adapter.ts` -> Core。
 - 事件回流：Core -> `unix_socket_adapter.ts` -> `protocol.ts` guard -> `store.ts` -> `index.tsx` render。
-- Socket path 可用 `--socket-path <path>` 指定，預設 `/tmp/tty-clock-timer.sock`。
+- Socket path 由 Core 每次執行時動態產生唯一值（避免多實例衝突），可用 `--socket-path <path>` 指定自訂路徑。
 
 ## Unit test 範圍（目前）
 
