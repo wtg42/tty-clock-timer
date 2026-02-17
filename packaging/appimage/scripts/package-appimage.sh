@@ -31,14 +31,18 @@ if [[ ! -x "${STAGE_DIR}/usr/bin/tty_clock_timer" ]]; then
   "${SCRIPT_DIR}/build-core.sh"
 fi
 
+# Build TUI bundle (replaces copying raw source + node_modules)
+echo "[package-appimage] Building TUI bundle..."
+(cd "${TUI_SRC_DIR}" && bun run build)
+
 rm -rf "${APPDIR}"
 install -d "${APPDIR}/usr/bin"
-install -d "${APPDIR}/usr/lib/tty-clock-timer"
+install -d "${APPDIR}/usr/lib/tty-clock-timer/tui"
 install -d "${APPDIR}/usr/share/applications"
 install -d "${APPDIR}/usr/share/icons/hicolor/scalable/apps"
 
 install -m 0755 "${STAGE_DIR}/usr/bin/tty_clock_timer" "${APPDIR}/usr/bin/tty_clock_timer"
-cp -R "${TUI_SRC_DIR}" "${APPDIR}/usr/lib/tty-clock-timer/tui"
+cp -R "${TUI_SRC_DIR}/dist/." "${APPDIR}/usr/lib/tty-clock-timer/tui/"
 
 install -m 0644 "${ASSETS_DIR}/tty-clock-timer.desktop" "${APPDIR}/usr/share/applications/tty-clock-timer.desktop"
 install -m 0644 "${ASSETS_DIR}/tty-clock-timer.svg" "${APPDIR}/usr/share/icons/hicolor/scalable/apps/tty-clock-timer.svg"
@@ -52,7 +56,7 @@ set -euo pipefail
 
 APPDIR="$(cd -- "$(dirname -- "$0")" && pwd)"
 export TTY_CLOCK_TUI_CWD="${TTY_CLOCK_TUI_CWD:-${APPDIR}/usr/lib/tty-clock-timer/tui}"
-export TTY_CLOCK_TUI_ENTRY="${TTY_CLOCK_TUI_ENTRY:-src/index.tsx}"
+export TTY_CLOCK_TUI_ENTRY="${TTY_CLOCK_TUI_ENTRY:-index.js}"
 
 exec "${APPDIR}/usr/bin/tty_clock_timer" "$@"
 EOF
