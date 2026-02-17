@@ -50,7 +50,8 @@ check_executable "${APPDIR}/AppRun" "AppRun"
 check_exists "${APPDIR}/usr/bin/tty_clock_timer" "core binary"
 check_executable "${APPDIR}/usr/bin/tty_clock_timer" "core binary"
 
-check_exists "${APPDIR}/usr/lib/tty-clock-timer/tui/src/index.tsx" "TUI runtime entry"
+check_exists "${APPDIR}/usr/lib/tty-clock-timer/tui/index.js" "TUI runtime entry"
+check_exists "${APPDIR}/usr/lib/tty-clock-timer/tui/libopentui.so" "TUI native library"
 check_exists "${APPDIR}/usr/share/applications/tty-clock-timer.desktop" "desktop file"
 check_exists "${APPDIR}/usr/share/icons/hicolor/scalable/apps/tty-clock-timer.svg" "icon"
 

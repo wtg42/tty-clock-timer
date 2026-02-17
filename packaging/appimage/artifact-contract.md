@@ -8,7 +8,8 @@
 | --- | --- | --- | --- |
 | Core binary | Yes | `usr/bin/tty_clock_timer` | AppImage 內唯一主入口 |
 | TUI runtime root | Yes | `usr/lib/tty-clock-timer/tui` | 由 core 作為 `cwd` 啟動 |
-| TUI entry file | Yes | `src/index.tsx` | 可用 `TTY_CLOCK_TUI_ENTRY` 覆蓋 |
+| TUI entry file | Yes | `index.js` | 可用 `TTY_CLOCK_TUI_ENTRY` 覆蓋 |
+| TUI native library | Yes | `libopentui.so` | 與 JS bundle 共同存在於 runtime root |
 | AppRun wrapper | Yes | `AppRun` | 只設置 contract env，最後執行 core |
 
 ## Runtime Path Resolution Order
@@ -24,7 +25,7 @@ core 啟動 TUI 時，`cwd` MUST 依序解析：
 entry 解析規則：
 
 - `TTY_CLOCK_TUI_ENTRY`（若存在）
-- 否則使用 `src/index.tsx`
+- 否則使用 `index.js`
 
 ## Launch Interface
 

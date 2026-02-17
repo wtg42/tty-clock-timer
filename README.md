@@ -91,7 +91,7 @@ AppImage 與開發模式共用統一的 **Core-TUI artifact contract**，定義�
 
 - **Core binary**: `usr/bin/tty_clock_timer`（AppImage 內唯一入口）
 - **TUI runtime root**: `usr/lib/tty-clock-timer/tui`（由 core 以此作為工作目錄啟動）
-- **TUI entry file**: `src/index.tsx`（可透過環境變數 `TTY_CLOCK_TUI_ENTRY` 覆蓋）
+- **TUI entry file**: `index.js`（可透過環境變數 `TTY_CLOCK_TUI_ENTRY` 覆蓋）
 - **AppRun wrapper**: 設置環境變數後轉呼叫 core，不直接啟動 UI
 
 詳細契約規範見 [packaging/appimage/artifact-contract.md](./packaging/appimage/artifact-contract.md)。

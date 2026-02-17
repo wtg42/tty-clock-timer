@@ -1,0 +1,155 @@
+name: Tag Driven AppImage Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release-appimage:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Zig
+        uses: mlugg/setup-zig@v2
+        with:
+          version: master
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Extract and validate release version
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          tag="${GITHUB_REF_NAME}"
+          if [[ ! "${tag}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([-.+][0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error title=Invalid release tag::Tag '${tag}' must match v<major>.<minor>.<patch> (optional prerelease/build suffix)."
+            exit 1
+          fi
+
+          version="${tag}"
+          artifact="tty-clock-timer-${version}-linux-x86_64.AppImage"
+
+          {
+            echo "tag=${tag}"
+            echo "version=${version}"
+            echo "artifact=${artifact}"
+          } >> "${GITHUB_OUTPUT}"
+
+      - name: Prepare appimagetool
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          mkdir -p packaging/tools
+          curl -fsSL -o packaging/tools/appimagetool.AppImage "https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage"
+          chmod 0755 packaging/tools/appimagetool.AppImage
+
+      - name: Build stage (core)
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if ! ./packaging/appimage/scripts/build-core.sh; then
+            echo "::error title=Release stage failed::stage=build"
+            exit 1
+          fi
+
+      - name: Package stage (AppImage)
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if ! APPIMAGE_VERSION="${{ steps.version.outputs.version }}" ./packaging/appimage/scripts/package-appimage.sh; then
+            echo "::error title=Release stage failed::stage=package"
+            exit 1
+          fi
+
+      - name: Verify stage (artifact checks)
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if ! APPIMAGE_VERSION="${{ steps.version.outputs.version }}" ./packaging/appimage/scripts/verify-artifact.sh; then
+            echo "::error title=Release stage failed::stage=verify"
+            exit 1
+          fi
+
+      - name: Build release metadata
+        id: metadata
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          out_dir="packaging/out/appimage"
+          artifact_name="${{ steps.version.outputs.artifact }}"
+          artifact_path="${out_dir}/${artifact_name}"
+          sha_file="${out_dir}/${artifact_name}.sha256"
+          metadata_file="${out_dir}/release-metadata-${{ steps.version.outputs.version }}.json"
+
+          sha256sum "${artifact_path}" > "${sha_file}"
+          sha_value="$(cut -d ' ' -f1 "${sha_file}")"
+
+          cat > "${metadata_file}" <<EOF
+          {
+            "tag": "${{ steps.version.outputs.tag }}",
+            "version": "${{ steps.version.outputs.version }}",
+            "platform": "linux-x86_64",
+            "artifact": "${artifact_name}",
+            "artifact_sha256": "${sha_value}"
+          }
+          EOF
+
+          {
+            echo "artifact_path=${artifact_path}"
+            echo "sha_file=${sha_file}"
+            echo "metadata_file=${metadata_file}"
+          } >> "${GITHUB_OUTPUT}"
+
+      - name: Upload stage (GitHub Release assets)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          tag="${{ steps.version.outputs.tag }}"
+          title="tty-clock-timer ${tag}"
+          notes_file="packaging/out/appimage/release-notes-${{ steps.version.outputs.version }}.md"
+
+          cat > "${notes_file}" <<EOF
+          Version: ${{ steps.version.outputs.version }}
+          Platform: linux-x86_64
+          Artifact: ${{ steps.version.outputs.artifact }}
+
+          Assets:
+          - ${{ steps.version.outputs.artifact }}
+          - ${{ steps.version.outputs.artifact }}.sha256
+          - release-metadata-${{ steps.version.outputs.version }}.json
+          EOF
+
+          if ! gh release view "${tag}" >/dev/null 2>&1; then
+            if ! gh release create "${tag}" --title "${title}" --notes-file "${notes_file}"; then
+              echo "::error title=Release stage failed::stage=upload"
+              exit 1
+            fi
+          fi
+
+          if ! gh release upload "${tag}" \
+            "${{ steps.metadata.outputs.artifact_path }}" \
+            "${{ steps.metadata.outputs.sha_file }}" \
+            "${{ steps.metadata.outputs.metadata_file }}" \
+            --clobber; then
+            echo "::error title=Release stage failed::stage=upload"
+            exit 1
+          fi

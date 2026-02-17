@@ -1,6 +1,6 @@
 # AppImage Packaging Foundation
 
-此目錄提供 Linux x86_64 的 AppImage 打包骨架，作為 `tty-clock-timer` manual release 的基礎。
+此目錄提供 Linux x86_64 的 AppImage 打包骨架，支援 `tty-clock-timer` 的 tag-driven 自動發版主流程與 manual release fallback。
 
 ## Target and Output
 
@@ -29,6 +29,21 @@ packaging/appimage/
 ```
 
 ## Fixed Build/Package Interface
+
+## Release Modes
+
+### Tag-driven (Primary)
+
+- Trigger: push version tag（`v*`）
+- Workflow: `.github/workflows/tag-driven-appimage-release.yml`
+- Output assets:
+  - `tty-clock-timer-<version>-linux-x86_64.AppImage`
+  - `tty-clock-timer-<version>-linux-x86_64.AppImage.sha256`
+  - `release-metadata-<version>.json`
+
+### Manual (Fallback)
+
+當 CI/環境異常導致 tag-driven 流程不可用時，維護者可使用下列固定介面手動完成同版本交付。
 
 ### 1) Build Core Artifact
 

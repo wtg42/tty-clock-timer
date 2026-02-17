@@ -3,7 +3,7 @@
 ## A. Build and Package Readiness
 
 - [ ] `core/` 可成功 `zig build -Dtarget=x86_64-linux -Doptimize=ReleaseSafe`
-- [ ] `tui/` runtime artifact 已可被打包（含 `src/index.tsx`）
+- [ ] `tui/` runtime artifact 已可被打包（含 `dist/index.js` 與 `libopentui.so`）
 - [ ] `appimagetool` 可在當前環境執行
 
 ## B. Artifact Integrity
@@ -15,7 +15,8 @@
 ## C. Bundled Assets Presence
 
 - [ ] `AppDir/usr/bin/tty_clock_timer` 存在且可執行
-- [ ] `AppDir/usr/lib/tty-clock-timer/tui/src/index.tsx` 存在
+- [ ] `AppDir/usr/lib/tty-clock-timer/tui/index.js` 存在
+- [ ] `AppDir/usr/lib/tty-clock-timer/tui/libopentui.so` 存在
 - [ ] `AppDir/AppRun` 存在且會轉呼叫 core binary
 - [ ] `.desktop` 與 icon 資產存在
 

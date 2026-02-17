@@ -26,4 +26,4 @@ Produced artifact:
 
 - Current AppImage runtime still depends on host `bun` executable being available in `PATH`.
 - `appimagetool` is not pinned in-repo; packaging currently expects external binary (`APPIMAGETOOL_BIN`) or system install.
-- TUI runtime is currently bundled as source tree (`tui/`), not a minimized production bundle.
+- TUI runtime 由 `tui/dist/` bundle（`index.js` + `libopentui.so`）提供，驗證腳本需依 bundle 產物檢查。

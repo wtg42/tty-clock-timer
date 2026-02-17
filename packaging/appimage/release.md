@@ -1,4 +1,17 @@
-# Manual Release Playbook (Linux x86_64)
+# Release Playbook (Linux x86_64)
+
+## 0) Preferred Path: Tag-driven Automation
+
+主要發版路徑為 Git tag 觸發：
+
+1. 建立並推送版本 tag（建議格式：`v<major>.<minor>.<patch>`）
+2. GitHub Actions workflow `.github/workflows/tag-driven-appimage-release.yml` 自動執行 build/package/verify/upload
+3. Workflow 成功後，GitHub Release 會附帶：
+   - `tty-clock-timer-<version>-linux-x86_64.AppImage`
+   - `tty-clock-timer-<version>-linux-x86_64.AppImage.sha256`
+   - `release-metadata-<version>.json`
+
+若自動化流程失敗，請依下方 Manual Fallback 完成交付。
 
 ## 1) Preflight Checks
 
@@ -9,7 +22,7 @@
 3. `tui/` 相依完整（`node_modules` 與 runtime entry 存在）
 4. 目前 branch 的 OpenSpec tasks 與驗收紀錄已更新
 
-## 2) Build and Package Steps
+## 2) Manual Fallback: Build and Package Steps
 
 ```bash
 ./packaging/appimage/scripts/build-core.sh
@@ -64,20 +77,13 @@ Known limitations:
 - ...
 ```
 
-## 5) Automation Handoff Notes (No CI/CD in this change)
+## 5) Failure Signals and Fallback
 
-後續若接自動化，建議分三個 job：
+tag-driven workflow 會在以下階段回報可判讀失敗訊號：
 
-1. `build-core-linux-x86_64`
-   - 執行 `build-core.sh`
-   - 上傳 stage binary artifact
-2. `package-appimage`
-   - 下載 stage artifact
-   - 執行 `package-appimage.sh`
-   - 產出 AppImage
-3. `verify-and-publish`
-   - 執行 `verify-artifact.sh`
-   - 計算 SHA256
-   - 發佈到 release channel
+- `stage=build`
+- `stage=package`
+- `stage=verify`
+- `stage=upload`
 
-自動化前提：仍必須維持「core 啟動 UI」契約，不新增平行啟動路徑。
+若任一階段失敗，維護者 MUST 回退至本文件第 2 節的 manual fallback 流程，並使用同一版本字串完成交付。
