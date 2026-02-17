@@ -273,7 +273,7 @@ const App = () => {
               text="TTY Clock Timer"
             />
             <ascii_font
-              font="tiny"
+              font="slick"
               text={formatRemaining(state().remainingSeconds)}
               margin={1}
             />
