@@ -12,7 +12,31 @@ const conf = @import("lib/config.zig");
 const ipc = @import("lib/ipc.zig");
 const timer_mod = @import("lib/timer.zig");
 
-const SOCKET_PATH = "/tmp/tty-clock-timer.sock";
+const SOCKET_BIND_RETRY_LIMIT: u8 = 8;
+const MAX_UI_CWD_CANDIDATES: usize = 5;
+const DEFAULT_UI_ENTRY = "src/index.tsx";
+const SOCKET_PATH_FORMAT = "/tmp/tty-clock-timer-{x:0>2}{x:0>2}{x:0>2}{x:0>2}{x:0>2}{x:0>2}{x:0>2}{x:0>2}.sock";
+
+const UiRuntimeContract = struct {
+    cwd: []const u8,
+    entry: []const u8,
+};
+
+const UiCwdCandidates = struct {
+    items: [MAX_UI_CWD_CANDIDATES][]const u8 = undefined,
+    len: usize = 0,
+
+    fn append(self: *UiCwdCandidates, candidate: []const u8) void {
+        if (candidate.len == 0) return;
+        if (self.len >= self.items.len) return;
+        self.items[self.len] = candidate;
+        self.len += 1;
+    }
+
+    fn asSlice(self: *const UiCwdCandidates) []const []const u8 {
+        return self.items[0..self.len];
+    }
+};
 
 fn helpMessage() []const u8 {
     return "Usage: tty_clock_timer [OPTIONS]\n" ++
@@ -252,18 +276,93 @@ fn setupRawMode(stderr_writer: *Io.Writer) !RawModeContext {
     };
 }
 
-/// Resolve TUI working directory from common launch locations.
-/// Tries "tui", "../tui", "../../tui" in order.
-/// Returns the first found directory path or null if none exist.
-fn findUiCwd(io: Io) ?[]const u8 {
-    const ui_candidates = [_][]const u8{ "tui", "../tui", "../../tui" };
-    for (ui_candidates) |candidate| {
+/// Resolves AppImage runtime TUI location from APPDIR contract.
+fn resolveAppImageUiCwdCandidate(
+    environ_map: *const std.process.Environ.Map,
+    buffer: []u8,
+) ?[]const u8 {
+    const appdir = environ_map.get("APPDIR") orelse return null;
+    if (appdir.len == 0) return null;
+    return std.fmt.bufPrint(buffer, "{s}/usr/lib/tty-clock-timer/tui", .{appdir}) catch null;
+}
+
+/// Collects ordered TUI cwd candidates according to artifact contract.
+fn collectUiCwdCandidates(
+    environ_map: *const std.process.Environ.Map,
+    appdir_candidate: ?[]const u8,
+) UiCwdCandidates {
+    var candidates = UiCwdCandidates{};
+    if (environ_map.get("TTY_CLOCK_TUI_CWD")) |override| {
+        candidates.append(override);
+    }
+    if (appdir_candidate) |candidate| {
+        candidates.append(candidate);
+    }
+    const local_fallbacks = [_][]const u8{ "tui", "../tui", "../../tui" };
+    for (local_fallbacks) |fallback| {
+        candidates.append(fallback);
+    }
+    return candidates;
+}
+
+/// Resolve TUI working directory from contract candidates.
+fn findUiCwd(io: Io, candidates: []const []const u8) ?[]const u8 {
+    for (candidates) |candidate| {
         if (Dir.cwd().openDir(io, candidate, .{})) |dir| {
             dir.close(io);
             return candidate;
         } else |_| {}
     }
     return null;
+}
+
+/// Resolves TUI entry path from artifact contract.
+fn resolveUiEntry(environ_map: *const std.process.Environ.Map) []const u8 {
+    return environ_map.get("TTY_CLOCK_TUI_ENTRY") orelse DEFAULT_UI_ENTRY;
+}
+
+/// Validates contract entry exists within resolved TUI runtime cwd.
+fn uiEntryExists(io: Io, cwd: []const u8, entry: []const u8) bool {
+    var dir = Dir.cwd().openDir(io, cwd, .{}) catch return false;
+    defer dir.close(io);
+
+    const file = dir.openFile(io, entry, .{}) catch return false;
+    file.close(io);
+    return true;
+}
+
+/// Reports missing runtime artifact diagnostics.
+fn printMissingUiArtifactError(stderr_writer: *Io.Writer, candidates: []const []const u8) !void {
+    try stderr_writer.print(
+        "Error: Missing TUI runtime artifact (contract cwd unresolved)\n",
+        .{},
+    );
+    if (candidates.len == 0) {
+        try stderr_writer.print("Attempted runtime locations: <none>\n", .{});
+    } else {
+        try stderr_writer.print("Attempted runtime locations:\n", .{});
+        for (candidates) |candidate| {
+            try stderr_writer.print("  - {s}\n", .{candidate});
+        }
+    }
+    try stderr_writer.print(
+        "Hint: set TTY_CLOCK_TUI_CWD or package APPDIR/usr/lib/tty-clock-timer/tui\n",
+        .{},
+    );
+}
+
+/// Reports invalid runtime entry diagnostics.
+fn printInvalidUiEntryError(stderr_writer: *Io.Writer, cwd: []const u8, entry: []const u8) !void {
+    try stderr_writer.print(
+        "Error: Invalid TUI runtime entry (contract entry unresolved)\n",
+        .{},
+    );
+    try stderr_writer.print("Runtime cwd: {s}\n", .{cwd});
+    try stderr_writer.print("Configured entry: {s}\n", .{entry});
+    try stderr_writer.print(
+        "Hint: set TTY_CLOCK_TUI_ENTRY to a valid file under the runtime cwd\n",
+        .{},
+    );
 }
 
 /// Allows UI child a brief graceful shutdown window, then reaps/forces cleanup.
@@ -279,30 +378,73 @@ fn teardownUiChild(io: Io, child: *std.process.Child) void {
 /// Context for Unix socket server management.
 const SocketServerContext = struct {
     server: std.Io.net.Server,
+    socket_path: []u8,
 };
 
+/// Generates per-execution unique socket path for IPC.
+fn generateSocketPath(allocator: std.mem.Allocator, io: Io) ![]u8 {
+    var random_bytes: [8]u8 = undefined;
+    io.random(&random_bytes);
+    return std.fmt.allocPrint(
+        allocator,
+        SOCKET_PATH_FORMAT,
+        .{
+            random_bytes[0],
+            random_bytes[1],
+            random_bytes[2],
+            random_bytes[3],
+            random_bytes[4],
+            random_bytes[5],
+            random_bytes[6],
+            random_bytes[7],
+        },
+    );
+}
+
 /// Prepare Unix socket server for TUI <-> core IPC bridge.
-/// Clears stale socket file, initializes address, and starts listening.
-fn setupSocket(io: Io, stderr_writer: *Io.Writer, socket_path: []const u8) !SocketServerContext {
-    clearSocketPath(io, socket_path) catch |err| {
-        try stderr_writer.print("Error: Failed to clear stale socket ({s})\n", .{@errorName(err)});
-        try stderr_writer.flush();
-        std.process.exit(1);
-    };
+/// Handles stale files and retries on path conflict.
+fn setupSocket(allocator: std.mem.Allocator, io: Io, stderr_writer: *Io.Writer) !SocketServerContext {
+    var attempts: u8 = 0;
+    while (attempts < SOCKET_BIND_RETRY_LIMIT) : (attempts += 1) {
+        const socket_path = try generateSocketPath(allocator, io);
+        errdefer allocator.free(socket_path);
 
-    const socket_address = std.Io.net.UnixAddress.init(socket_path) catch |err| {
-        try stderr_writer.print("Error: Invalid socket path ({s})\n", .{@errorName(err)});
-        try stderr_writer.flush();
-        std.process.exit(1);
-    };
+        clearSocketPath(io, socket_path) catch |err| {
+            try stderr_writer.print("Error: Failed to clear stale socket ({s})\n", .{@errorName(err)});
+            try stderr_writer.flush();
+            std.process.exit(1);
+        };
 
-    const server = std.Io.net.UnixAddress.listen(&socket_address, io, .{}) catch |err| {
-        try stderr_writer.print("Error: Failed to listen on unix socket ({s})\n", .{@errorName(err)});
-        try stderr_writer.flush();
-        std.process.exit(1);
-    };
+        const socket_address = std.Io.net.UnixAddress.init(socket_path) catch |err| {
+            try stderr_writer.print("Error: Invalid socket path ({s})\n", .{@errorName(err)});
+            try stderr_writer.flush();
+            std.process.exit(1);
+        };
 
-    return SocketServerContext{ .server = server };
+        const server = std.Io.net.UnixAddress.listen(&socket_address, io, .{}) catch |err| switch (err) {
+            error.AddressInUse => {
+                clearSocketPath(io, socket_path) catch {};
+                continue;
+            },
+            else => {
+                try stderr_writer.print("Error: Failed to listen on unix socket ({s})\n", .{@errorName(err)});
+                try stderr_writer.flush();
+                std.process.exit(1);
+            },
+        };
+
+        return SocketServerContext{
+            .server = server,
+            .socket_path = socket_path,
+        };
+    }
+
+    try stderr_writer.print(
+        "Error: Failed to allocate unique socket path after {d} attempts\n",
+        .{SOCKET_BIND_RETRY_LIMIT},
+    );
+    try stderr_writer.flush();
+    std.process.exit(1);
 }
 
 /// Main event loop: poll stdin/socket, handle commands, advance timer, emit updates.
@@ -506,6 +648,7 @@ pub fn main(init: std.process.Init) !void {
     defer if (ui_child) |*child| teardownUiChild(io, child);
 
     var socket_server: ?std.Io.net.Server = null;
+    var socket_path: ?[]u8 = null;
     var socket_stream: ?std.Io.net.Stream = null;
     defer {
         if (socket_stream) |stream| {
@@ -513,32 +656,60 @@ pub fn main(init: std.process.Init) !void {
             copy.close(io);
         }
         if (socket_server) |*server| server.deinit(io);
-        clearSocketPath(io, SOCKET_PATH) catch {};
+        if (socket_path) |path| {
+            clearSocketPath(io, path) catch {};
+            allocator.free(path);
+        }
     }
 
-    // Step 6: Resolve TUI working directory from common launch locations.
-    const ui_cwd = findUiCwd(io);
+    // Step 6: Resolve TUI runtime contract (cwd + entry).
+    var appdir_ui_cwd_storage: [std.fs.max_path_bytes]u8 = undefined;
+    const appdir_ui_cwd = resolveAppImageUiCwdCandidate(init.environ_map, &appdir_ui_cwd_storage);
+    const ui_candidates = collectUiCwdCandidates(init.environ_map, appdir_ui_cwd);
+    const ui_cwd = findUiCwd(io, ui_candidates.asSlice());
+    const ui_entry = resolveUiEntry(init.environ_map);
 
-    if (std.process.can_spawn and ui_cwd != null) {
+    var ui_runtime: ?UiRuntimeContract = null;
+    if (std.process.can_spawn) {
+        if (ui_cwd) |cwd| {
+            if (uiEntryExists(io, cwd, ui_entry)) {
+                ui_runtime = UiRuntimeContract{
+                    .cwd = cwd,
+                    .entry = ui_entry,
+                };
+            } else {
+                printInvalidUiEntryError(stderr_writer, cwd, ui_entry) catch {};
+                stderr_writer.flush() catch {};
+            }
+        } else {
+            printMissingUiArtifactError(stderr_writer, ui_candidates.asSlice()) catch {};
+            stderr_writer.flush() catch {};
+        }
+    }
+
+    if (std.process.can_spawn and ui_runtime != null) {
         // Step 7: Prepare Unix socket server for TUI <-> core IPC bridge.
-        const server_ctx = try setupSocket(io, stderr_writer, SOCKET_PATH);
+        const server_ctx = try setupSocket(allocator, io, stderr_writer);
         socket_server = server_ctx.server;
+        socket_path = server_ctx.socket_path;
     }
 
     if (std.process.can_spawn) {
-        if (ui_cwd) |cwd| {
-            // Step 8: Spawn TUI child process and inject socket path argument.
+        if (ui_runtime) |runtime| {
+            const path = socket_path orelse unreachable;
+
+            // Step 8: Spawn TUI child process and inject per-run socket path argument.
             const ui_argv = &[_][]const u8{
                 "bun",
                 "run",
-                "src/index.tsx",
+                runtime.entry,
                 "--",
                 "--socket-path",
-                SOCKET_PATH,
+                path,
             };
             const child_result = std.process.spawn(io, .{
                 .argv = ui_argv,
-                .cwd = .{ .path = cwd },
+                .cwd = .{ .path = runtime.cwd },
                 .stdin = .inherit,
                 .stdout = .inherit,
                 .stderr = .inherit,
@@ -643,4 +814,68 @@ test "helpMessage - stable output" {
         "Usage: tty_clock_timer [OPTIONS]\n\nOptions:\n  -m, --minutes <num>    Set countdown minutes\n  -s, --seconds <num>    Set countdown seconds\n  -h, --help             Show this help message\n\nExample:\n  tty_clock_timer --minutes 25\n  tty_clock_timer -s 90\n",
         helpMessage(),
     );
+}
+
+test "main/resolveAppImageUiCwdCandidate - derives APPDIR runtime path" {
+    const allocator = std.testing.allocator;
+    var environ_map = std.process.Environ.Map.init(allocator);
+    defer environ_map.deinit();
+
+    try environ_map.put("APPDIR", "/tmp/tty-clock-timer-appdir");
+
+    var buffer: [std.fs.max_path_bytes]u8 = undefined;
+    const candidate = resolveAppImageUiCwdCandidate(&environ_map, &buffer) orelse {
+        try std.testing.expect(false);
+        return;
+    };
+    try std.testing.expectEqualStrings(
+        "/tmp/tty-clock-timer-appdir/usr/lib/tty-clock-timer/tui",
+        candidate,
+    );
+}
+
+test "main/collectUiCwdCandidates - contract order is stable" {
+    const allocator = std.testing.allocator;
+    var environ_map = std.process.Environ.Map.init(allocator);
+    defer environ_map.deinit();
+
+    try environ_map.put("TTY_CLOCK_TUI_CWD", "/opt/tty-clock-timer/tui");
+    try environ_map.put("APPDIR", "/tmp/tty-clock-timer-appdir");
+
+    var buffer: [std.fs.max_path_bytes]u8 = undefined;
+    const appdir_candidate = resolveAppImageUiCwdCandidate(&environ_map, &buffer);
+    const candidates = collectUiCwdCandidates(&environ_map, appdir_candidate);
+    const slice = candidates.asSlice();
+
+    try std.testing.expectEqual(@as(usize, 5), slice.len);
+    try std.testing.expectEqualStrings("/opt/tty-clock-timer/tui", slice[0]);
+    try std.testing.expectEqualStrings("/tmp/tty-clock-timer-appdir/usr/lib/tty-clock-timer/tui", slice[1]);
+    try std.testing.expectEqualStrings("tui", slice[2]);
+    try std.testing.expectEqualStrings("../tui", slice[3]);
+    try std.testing.expectEqualStrings("../../tui", slice[4]);
+}
+
+test "main/resolveUiEntry - uses default and override" {
+    const allocator = std.testing.allocator;
+    var environ_map = std.process.Environ.Map.init(allocator);
+    defer environ_map.deinit();
+
+    try std.testing.expectEqualStrings(DEFAULT_UI_ENTRY, resolveUiEntry(&environ_map));
+
+    try environ_map.put("TTY_CLOCK_TUI_ENTRY", "dist/index.mjs");
+    try std.testing.expectEqualStrings("dist/index.mjs", resolveUiEntry(&environ_map));
+}
+
+test "main/generateSocketPath - returns unique IPC socket paths" {
+    const allocator = std.testing.allocator;
+    const io = std.testing.io;
+
+    const first = try generateSocketPath(allocator, io);
+    defer allocator.free(first);
+    const second = try generateSocketPath(allocator, io);
+    defer allocator.free(second);
+
+    try std.testing.expect(!std.mem.eql(u8, first, second));
+    try std.testing.expect(std.mem.startsWith(u8, first, "/tmp/tty-clock-timer-"));
+    try std.testing.expect(std.mem.endsWith(u8, first, ".sock"));
 }

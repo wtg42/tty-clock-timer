@@ -22,8 +22,8 @@
 │                         Zig Core (core/)                           │
 │ 1) parse args                                                      │
 │ 2) init countdown timer                                            │
-│ 3) setup Unix socket server (/tmp/tty-clock-timer.sock)            │
-│ 4) spawn TUI process (bun run src/index.tsx -- --socket-path ...)  │
+│ 3) setup unique Unix socket server (/tmp/tty-clock-timer-*.sock)   │
+│ 4) spawn TUI process (bun run <entry> -- --socket-path <unique>)    │
 └────────────────────────────────────────────────────────────────────┘
                      │                               │
                      │ timer events                  │ commands
@@ -57,6 +57,7 @@
 
 [With --minutes/--seconds]
   -> Core starts timer loop.
+  -> Core resolves TUI runtime contract (TTY_CLOCK_TUI_CWD/TTY_CLOCK_TUI_ENTRY/APPDIR).
   -> If TUI connects: use socket command/event flow.
   -> If TUI not connected: fallback stdin path supports q to quit.
 ```

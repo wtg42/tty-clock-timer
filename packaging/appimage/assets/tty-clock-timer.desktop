@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=tty-clock-timer
+Exec=tty_clock_timer
+Icon=tty-clock-timer
+Terminal=true
+Categories=Utility;
