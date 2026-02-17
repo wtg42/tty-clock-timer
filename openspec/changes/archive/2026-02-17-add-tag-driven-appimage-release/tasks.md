@@ -14,4 +14,4 @@
 
 - [x] 3.1 驗證既有 manual release 流程在新自動化加入後仍可獨立完成交付
 - [x] 3.2 更新 release 相關文件，明確說明 tag-driven 主流程與 manual fallback 使用時機
-- [ ] 3.3 使用測試 tag 演練一次完整 release，確認觸發、命名、上傳與失敗回報符合規格
+- [x] 3.3 使用測試 tag 演練一次完整 release，確認觸發、命名、上傳與失敗回報符合規格
