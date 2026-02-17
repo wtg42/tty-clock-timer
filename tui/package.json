@@ -15,12 +15,15 @@
     "typescript": "^5"
   },
   "dependencies": {
-    "@babel/core": "^7.28.5",
-    "@babel/preset-typescript": "^7.28.5",
+    "@babel/core": "7.28.5",
+    "@babel/preset-typescript": "7.28.5",
     "@opentui/core": "^0.1.79",
     "@opentui/solid": "^0.1.79",
     "babel-preset-solid": "1.9.9",
     "hono": "^4.9.7",
     "solid-js": "1.9.9"
+  },
+  "overrides": {
+    "@babel/traverse": "7.28.5"
   }
 }
