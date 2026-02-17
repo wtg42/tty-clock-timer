@@ -25,6 +25,13 @@ jobs:
         with:
           bun-version: latest
 
+      - name: Install TUI dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          bun install --frozen-lockfile
+        working-directory: tui
+
       - name: Extract and validate release version
         id: version
         shell: bash
