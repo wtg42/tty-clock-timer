@@ -8,10 +8,16 @@ const std = @import("std");
 
 /// Parsed CLI configuration.
 pub const Config = struct {
+    command: Command,
     /// Countdown duration in seconds.
     duration_seconds: u32,
     /// If true, caller should print usage and exit.
     show_help: bool,
+};
+
+pub const Command = enum {
+    start,
+    list,
 };
 
 /// CLI parse errors surfaced to main.
@@ -57,6 +63,7 @@ pub fn parseArgs(allocator: std.mem.Allocator, init: std.process.Init.Minimal) !
 /// Core parser from argv slice (without executable name).
 pub fn parseArgsFromSlice(args: []const []const u8) !Config {
     var config = Config{
+        .command = .start,
         .duration_seconds = 0,
         .show_help = false,
     };
@@ -72,6 +79,12 @@ pub fn parseArgsFromSlice(args: []const []const u8) !Config {
     // Step B: Explicit help has highest priority and short-circuits parsing.
     if (isHelpArg(first_arg)) {
         config.show_help = true;
+        return config;
+    }
+
+    if (isListArg(first_arg)) {
+        if (args.len != 1) return ParseError.UnknownArgument;
+        config.command = .list;
         return config;
     }
 
@@ -120,9 +133,15 @@ fn isSecondsArg(arg: []const u8) bool {
     return std.mem.eql(u8, arg, "--seconds") or std.mem.eql(u8, arg, "-s");
 }
 
+/// Returns true when `arg` is list subcommand.
+fn isListArg(arg: []const u8) bool {
+    return std.mem.eql(u8, arg, "list");
+}
+
 test "parseArgsFromSlice - valid minutes" {
     const args = &[_][]const u8{ "--minutes", "25" };
     const config = try parseArgsFromSlice(args);
+    try std.testing.expectEqual(Command.start, config.command);
     try std.testing.expectEqual(@as(u32, 1500), config.duration_seconds);
     try std.testing.expectEqual(false, config.show_help);
 }
@@ -130,6 +149,7 @@ test "parseArgsFromSlice - valid minutes" {
 test "parseArgsFromSlice - valid seconds" {
     const args = &[_][]const u8{ "--seconds", "90" };
     const config = try parseArgsFromSlice(args);
+    try std.testing.expectEqual(Command.start, config.command);
     try std.testing.expectEqual(@as(u32, 90), config.duration_seconds);
     try std.testing.expectEqual(false, config.show_help);
 }
@@ -137,6 +157,7 @@ test "parseArgsFromSlice - valid seconds" {
 test "parseArgsFromSlice - help flag" {
     const args = &[_][]const u8{"--help"};
     const config = try parseArgsFromSlice(args);
+    try std.testing.expectEqual(Command.start, config.command);
     try std.testing.expectEqual(@as(u32, 0), config.duration_seconds);
     try std.testing.expectEqual(true, config.show_help);
 }
@@ -144,6 +165,7 @@ test "parseArgsFromSlice - help flag" {
 test "parseArgsFromSlice - short minutes" {
     const args = &[_][]const u8{ "-m", "5" };
     const config = try parseArgsFromSlice(args);
+    try std.testing.expectEqual(Command.start, config.command);
     try std.testing.expectEqual(@as(u32, 300), config.duration_seconds);
     try std.testing.expectEqual(false, config.show_help);
 }
@@ -151,6 +173,7 @@ test "parseArgsFromSlice - short minutes" {
 test "parseArgsFromSlice - short seconds" {
     const args = &[_][]const u8{ "-s", "30" };
     const config = try parseArgsFromSlice(args);
+    try std.testing.expectEqual(Command.start, config.command);
     try std.testing.expectEqual(@as(u32, 30), config.duration_seconds);
     try std.testing.expectEqual(false, config.show_help);
 }
@@ -158,6 +181,7 @@ test "parseArgsFromSlice - short seconds" {
 test "parseArgsFromSlice - short help" {
     const args = &[_][]const u8{"-h"};
     const config = try parseArgsFromSlice(args);
+    try std.testing.expectEqual(Command.start, config.command);
     try std.testing.expectEqual(@as(u32, 0), config.duration_seconds);
     try std.testing.expectEqual(true, config.show_help);
 }
@@ -165,8 +189,22 @@ test "parseArgsFromSlice - short help" {
 test "parseArgsFromSlice - empty args shows help" {
     const args = &[_][]const u8{};
     const config = try parseArgsFromSlice(args);
+    try std.testing.expectEqual(Command.start, config.command);
     try std.testing.expectEqual(@as(u32, 0), config.duration_seconds);
     try std.testing.expectEqual(true, config.show_help);
+}
+
+test "parseArgsFromSlice - list subcommand" {
+    const args = &[_][]const u8{"list"};
+    const config = try parseArgsFromSlice(args);
+    try std.testing.expectEqual(Command.list, config.command);
+    try std.testing.expectEqual(@as(u32, 0), config.duration_seconds);
+    try std.testing.expectEqual(false, config.show_help);
+}
+
+test "parseArgsFromSlice - list with extra argument is invalid" {
+    const args = &[_][]const u8{ "list", "extra" };
+    try std.testing.expectError(ParseError.UnknownArgument, parseArgsFromSlice(args));
 }
 
 test "parseArgsFromSlice - missing minutes value" {

@@ -9,12 +9,14 @@ const std = @import("std");
 const Io = std.Io;
 const Dir = std.Io.Dir;
 const conf = @import("lib/config.zig");
+const history = @import("lib/history.zig");
 const ipc = @import("lib/ipc.zig");
 const timer_mod = @import("lib/timer.zig");
 
 const SOCKET_BIND_RETRY_LIMIT: u8 = 8;
 const MAX_UI_CWD_CANDIDATES: usize = 5;
 const DEFAULT_UI_ENTRY = "src/index.tsx";
+const GUM_SELECTION_TIMEOUT_SECONDS: i64 = 3;
 const SOCKET_PATH_FORMAT = "/tmp/tty-clock-timer-{x:0>2}{x:0>2}{x:0>2}{x:0>2}{x:0>2}{x:0>2}{x:0>2}{x:0>2}.sock";
 
 const UiRuntimeContract = struct {
@@ -44,11 +46,13 @@ fn helpMessage() []const u8 {
         "Options:\n" ++
         "  -m, --minutes <num>    Set countdown minutes\n" ++
         "  -s, --seconds <num>    Set countdown seconds\n" ++
+        "      list               Select from history durations\n" ++
         "  -h, --help             Show this help message\n" ++
         "\n" ++
         "Example:\n" ++
         "  tty_clock_timer --minutes 25\n" ++
-        "  tty_clock_timer -s 90\n";
+        "  tty_clock_timer -s 90\n" ++
+        "  tty_clock_timer list\n";
 }
 
 fn timerStateToStatus(state: timer_mod.TimerState) []const u8 {
@@ -70,6 +74,204 @@ fn configErrorMessage(err: conf.ParseError) []const u8 {
         conf.ParseError.Overflow => "Error: Numeric value too large\n",
         conf.ParseError.OutOfMemory => "Error: Out of memory\n",
     };
+}
+
+fn formatDurationLabel(allocator: std.mem.Allocator, duration_seconds: u32) ![]u8 {
+    const minutes = duration_seconds / 60;
+    const seconds = duration_seconds % 60;
+    return std.fmt.allocPrint(allocator, "{d:0>2}:{d:0>2} ({d}s)", .{ minutes, seconds, duration_seconds });
+}
+
+fn bundledGumRelativePath() ?[]const u8 {
+    const builtin = @import("builtin");
+    return switch (builtin.os.tag) {
+        .macos => switch (builtin.cpu.arch) {
+            .aarch64 => "tools/gum/darwin-arm64/gum",
+            .x86_64 => "tools/gum/darwin-x64/gum",
+            else => null,
+        },
+        .linux => switch (builtin.cpu.arch) {
+            .aarch64 => "tools/gum/linux-arm64/gum",
+            .x86_64 => "tools/gum/linux-x64/gum",
+            else => null,
+        },
+        else => null,
+    };
+}
+
+fn findBundledGum(io: Io) ?[]const u8 {
+    const relative = bundledGumRelativePath() orelse return null;
+
+    if (Dir.cwd().openFile(io, relative, .{})) |file| {
+        file.close(io);
+        return relative;
+    } else |_| {}
+
+    var prefixed_buf: [std.fs.max_path_bytes]u8 = undefined;
+    const parent_relative = std.fmt.bufPrint(&prefixed_buf, "../{s}", .{relative}) catch return null;
+    if (Dir.cwd().openFile(io, parent_relative, .{})) |file| {
+        file.close(io);
+        return parent_relative;
+    } else |_| {}
+
+    const grandparent_relative = std.fmt.bufPrint(&prefixed_buf, "../../{s}", .{relative}) catch return null;
+    if (Dir.cwd().openFile(io, grandparent_relative, .{})) |file| {
+        file.close(io);
+        return grandparent_relative;
+    } else |_| {}
+
+    return null;
+}
+
+fn appendArgOwned(
+    allocator: std.mem.Allocator,
+    args: *std.ArrayList([]const u8),
+    owned: *std.ArrayList([]u8),
+    value: []const u8,
+) !void {
+    const duped = try allocator.dupe(u8, value);
+    try owned.append(allocator, duped);
+    try args.append(allocator, duped);
+}
+
+fn chooseWithGum(
+    allocator: std.mem.Allocator,
+    io: Io,
+    entries: []const history.Entry,
+) !?u32 {
+    if (!std.process.can_spawn) return null;
+
+    var labels: std.ArrayList([]u8) = .empty;
+    defer {
+        for (labels.items) |label| allocator.free(label);
+        labels.deinit(allocator);
+    }
+
+    try labels.ensureTotalCapacity(allocator, entries.len);
+    for (entries) |entry| {
+        try labels.append(allocator, try formatDurationLabel(allocator, entry.duration_seconds));
+    }
+
+    var argv_owned: std.ArrayList([]u8) = .empty;
+    defer {
+        for (argv_owned.items) |value| allocator.free(value);
+        argv_owned.deinit(allocator);
+    }
+
+    var argv_list: std.ArrayList([]const u8) = .empty;
+    defer argv_list.deinit(allocator);
+
+    try appendArgOwned(allocator, &argv_list, &argv_owned, findBundledGum(io) orelse "gum");
+    try appendArgOwned(allocator, &argv_list, &argv_owned, "choose");
+    try appendArgOwned(allocator, &argv_list, &argv_owned, "--header");
+    try appendArgOwned(allocator, &argv_list, &argv_owned, "Select timer duration");
+    try appendArgOwned(allocator, &argv_list, &argv_owned, "--cursor");
+    try appendArgOwned(allocator, &argv_list, &argv_owned, "> ");
+    for (labels.items) |label| {
+        try appendArgOwned(allocator, &argv_list, &argv_owned, label);
+    }
+
+    const run_result = std.process.run(allocator, io, .{
+        .argv = argv_list.items,
+        .timeout = .{ .duration = .{ .clock = .awake, .raw = Io.Duration.fromSeconds(GUM_SELECTION_TIMEOUT_SECONDS) } },
+        .stdout_limit = .limited(4096),
+        .stderr_limit = .limited(4096),
+    }) catch {
+        return null;
+    };
+    defer {
+        allocator.free(run_result.stdout);
+        allocator.free(run_result.stderr);
+    }
+
+    switch (run_result.term) {
+        .exited => |code| if (code != 0) return null,
+        else => return null,
+    }
+
+    const selected = std.mem.trim(u8, run_result.stdout, " \t\r\n");
+    if (selected.len == 0) return null;
+
+    for (labels.items, entries) |label, entry| {
+        if (std.mem.eql(u8, selected, label)) return entry.duration_seconds;
+    }
+    return null;
+}
+
+fn chooseWithFallback(
+    allocator: std.mem.Allocator,
+    io: Io,
+    stdout_writer: *Io.Writer,
+    entries: []const history.Entry,
+) !?u32 {
+    var stdin_buffer: [1024]u8 = undefined;
+    var stdin_reader: Io.File.Reader = .initStreaming(.stdin(), io, &stdin_buffer);
+
+    while (true) {
+        try stdout_writer.print("History durations:\n", .{});
+        var index: usize = 0;
+        while (index < entries.len) : (index += 1) {
+            const label = try formatDurationLabel(allocator, entries[index].duration_seconds);
+            defer allocator.free(label);
+            try stdout_writer.print("  {d}. {s}\n", .{ index + 1, label });
+        }
+        try stdout_writer.print("Select an item (1-{d}) or q to cancel: ", .{entries.len});
+        try stdout_writer.flush();
+
+        const line = stdin_reader.interface.takeDelimiter('\n') catch |err| switch (err) {
+            error.ReadFailed => return null,
+            error.StreamTooLong => {
+                try stdout_writer.print("Input too long. Try again.\n", .{});
+                continue;
+            },
+        } orelse return null;
+
+        const selection = history.selectionFromInput(line, entries.len);
+        switch (selection) {
+            .canceled => return null,
+            .invalid => {
+                try stdout_writer.print("Invalid selection.\n", .{});
+                continue;
+            },
+            .chosen => |chosen| return entries[chosen].duration_seconds,
+        }
+    }
+}
+
+fn resolveDurationFromHistory(
+    allocator: std.mem.Allocator,
+    io: Io,
+    stdout_writer: *Io.Writer,
+    stderr_writer: *Io.Writer,
+    environ_map: *const std.process.Environ.Map,
+) !?u32 {
+    const history_path = history.resolveHistoryPath(allocator, environ_map) catch return null;
+    defer allocator.free(history_path);
+
+    const entries = history.loadEntries(allocator, io, history_path) catch |err| switch (err) {
+        error.InvalidHistoryFormat => {
+            try stderr_writer.print(
+                "Warning: History file is invalid; starting with empty history ({s})\n",
+                .{history_path},
+            );
+            try stderr_writer.flush();
+            return null;
+        },
+        else => return err,
+    };
+    defer allocator.free(entries);
+
+    if (entries.len == 0) {
+        try stdout_writer.print("No history entries found. Start a timer first.\n", .{});
+        try stdout_writer.flush();
+        return null;
+    }
+
+    if (try chooseWithGum(allocator, io, entries)) |selected| {
+        return selected;
+    }
+
+    return try chooseWithFallback(allocator, io, stdout_writer, entries);
 }
 
 /// Consumes buffered stdin input and returns `true` when quit is requested.
@@ -608,18 +810,7 @@ pub fn main(init: std.process.Init) !void {
     var stderr_file_writer: Io.File.Writer = .init(.stderr(), io, &stderr_buffer);
     const stderr_writer = &stderr_file_writer.interface;
 
-    // Step 3: Configure stdin into raw mode when running in a terminal.
-    // This lets us react to single-key input (`q`) without waiting for Enter.
-    const raw_mode = try setupRawMode(stderr_writer);
-    const stdin_is_tty = raw_mode.stdin_is_tty;
-    defer if (raw_mode.original_termios) |saved| {
-        std.posix.tcsetattr(Io.File.stdin().handle, .NOW, saved) catch |err| {
-            stderr_writer.print("Error: Failed to restore stdin settings ({s})\n", .{@errorName(err)}) catch {};
-            stderr_writer.flush() catch {};
-        };
-    };
-
-    // Step 4: Parse CLI arguments and fail fast on invalid input.
+    // Step 3: Parse CLI arguments and fail fast on invalid input.
     const config = conf.parseArgs(allocator, init.minimal) catch |err| {
         try stdout_writer.print("{s}", .{configErrorMessage(err)});
         try stdout_writer.flush();
@@ -633,8 +824,28 @@ pub fn main(init: std.process.Init) !void {
         return;
     }
 
-    const total_duration_seconds = config.duration_seconds;
+    const total_duration_seconds = switch (config.command) {
+        .start => config.duration_seconds,
+        .list => (try resolveDurationFromHistory(
+            allocator,
+            io,
+            stdout_writer,
+            stderr_writer,
+            init.environ_map,
+        )) orelse return,
+    };
     const total_duration_ns = @as(u64, total_duration_seconds) * std.time.ns_per_s;
+
+    // Step 4: Configure stdin into raw mode for timer runtime.
+    // This lets us react to single-key input (`q`) without waiting for Enter.
+    const raw_mode = try setupRawMode(stderr_writer);
+    const stdin_is_tty = raw_mode.stdin_is_tty;
+    defer if (raw_mode.original_termios) |saved| {
+        std.posix.tcsetattr(Io.File.stdin().handle, .NOW, saved) catch |err| {
+            stderr_writer.print("Error: Failed to restore stdin settings ({s})\n", .{@errorName(err)}) catch {};
+            stderr_writer.flush() catch {};
+        };
+    };
 
     // Step 5: Initialize and start the timer state machine.
     var countdown_timer = timer_mod.CountdownTimer.init(total_duration_ns);
@@ -643,6 +854,24 @@ pub fn main(init: std.process.Init) !void {
         try stderr_writer.flush();
         std.process.exit(1);
     };
+
+    const maybe_history_path = history.resolveHistoryPath(allocator, init.environ_map) catch null;
+    defer if (maybe_history_path) |path| allocator.free(path);
+    if (maybe_history_path) |path| {
+        history.recordDuration(
+            allocator,
+            io,
+            path,
+            total_duration_seconds,
+            history.nowUnixSeconds(io),
+        ) catch |err| {
+            try stderr_writer.print(
+                "Warning: Failed to persist history ({s})\n",
+                .{@errorName(err)},
+            );
+            try stderr_writer.flush();
+        };
+    }
 
     var ui_child: ?std.process.Child = null;
     defer if (ui_child) |*child| teardownUiChild(io, child);
@@ -811,7 +1040,7 @@ test "configErrorMessage - mapping" {
 
 test "helpMessage - stable output" {
     try std.testing.expectEqualStrings(
-        "Usage: tty_clock_timer [OPTIONS]\n\nOptions:\n  -m, --minutes <num>    Set countdown minutes\n  -s, --seconds <num>    Set countdown seconds\n  -h, --help             Show this help message\n\nExample:\n  tty_clock_timer --minutes 25\n  tty_clock_timer -s 90\n",
+        "Usage: tty_clock_timer [OPTIONS]\n\nOptions:\n  -m, --minutes <num>    Set countdown minutes\n  -s, --seconds <num>    Set countdown seconds\n      list               Select from history durations\n  -h, --help             Show this help message\n\nExample:\n  tty_clock_timer --minutes 25\n  tty_clock_timer -s 90\n  tty_clock_timer list\n",
         helpMessage(),
     );
 }
