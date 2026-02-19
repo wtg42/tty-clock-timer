@@ -20,7 +20,8 @@
 1. `zig`、`bun`、`appimagetool` 可用
 2. `core/` 測試可跑（至少 `zig build test`）
 3. `tui/` 相依完整（`node_modules` 與 runtime entry 存在）
-4. 目前 branch 的 OpenSpec tasks 與驗收紀錄已更新
+4. `packaging/tools/gum/linux-x64/gum` 存在且具 executable 權限（`chmod +x`）
+5. 目前 branch 的 OpenSpec tasks 與驗收紀錄已更新
 
 ## 2) Manual Fallback: Build and Package Steps
 
@@ -39,6 +40,8 @@ TTY_CLOCK_TUI_ENTRY="mvp-smoke.ts" \
 ```
 
 > `APPIMAGE_VERSION` 未提供時預設為 `dev`。
+
+> `package-appimage.sh` 會在打包前檢查 `packaging/tools/gum/linux-x64/gum` 是否存在且可執行，並將其打包到 AppDir 內 `usr/lib/tty-clock-timer/tools/gum/linux-x64/gum`。
 
 ## 3) Artifact Naming and Attached Information
 

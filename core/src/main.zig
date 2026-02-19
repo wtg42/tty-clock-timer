@@ -16,8 +16,15 @@ const timer_mod = @import("lib/timer.zig");
 const SOCKET_BIND_RETRY_LIMIT: u8 = 8;
 const MAX_UI_CWD_CANDIDATES: usize = 5;
 const DEFAULT_UI_ENTRY = "src/index.tsx";
-const GUM_SELECTION_TIMEOUT_SECONDS: i64 = 3;
+const GUM_BINARY_ENV = "TTY_CLOCK_GUM_BIN";
+const GUM_DEBUG_ENV = "TTY_CLOCK_DEBUG_GUM";
 const SOCKET_PATH_FORMAT = "/tmp/tty-clock-timer-{x:0>2}{x:0>2}{x:0>2}{x:0>2}{x:0>2}{x:0>2}{x:0>2}{x:0>2}.sock";
+
+const GumSelection = union(enum) {
+    chosen: u32,
+    canceled,
+    failed,
+};
 
 const UiRuntimeContract = struct {
     cwd: []const u8,
@@ -82,45 +89,88 @@ fn formatDurationLabel(allocator: std.mem.Allocator, duration_seconds: u32) ![]u
     return std.fmt.allocPrint(allocator, "{d:0>2}:{d:0>2} ({d}s)", .{ minutes, seconds, duration_seconds });
 }
 
-fn bundledGumRelativePath() ?[]const u8 {
+fn bundledGumPathCandidates() []const []const u8 {
     const builtin = @import("builtin");
     return switch (builtin.os.tag) {
         .macos => switch (builtin.cpu.arch) {
-            .aarch64 => "tools/gum/darwin-arm64/gum",
-            .x86_64 => "tools/gum/darwin-x64/gum",
-            else => null,
+            .aarch64 => &[_][]const u8{
+                "packaging/tools/gum/darwin-arm64/gum",
+                "../packaging/tools/gum/darwin-arm64/gum",
+                "../../packaging/tools/gum/darwin-arm64/gum",
+                "tools/gum/darwin-arm64/gum",
+                "../tools/gum/darwin-arm64/gum",
+                "../../tools/gum/darwin-arm64/gum",
+            },
+            .x86_64 => &[_][]const u8{
+                "packaging/tools/gum/darwin-x64/gum",
+                "../packaging/tools/gum/darwin-x64/gum",
+                "../../packaging/tools/gum/darwin-x64/gum",
+                "tools/gum/darwin-x64/gum",
+                "../tools/gum/darwin-x64/gum",
+                "../../tools/gum/darwin-x64/gum",
+            },
+            else => &[_][]const u8{},
         },
         .linux => switch (builtin.cpu.arch) {
-            .aarch64 => "tools/gum/linux-arm64/gum",
-            .x86_64 => "tools/gum/linux-x64/gum",
-            else => null,
+            .aarch64 => &[_][]const u8{
+                "packaging/tools/gum/linux-arm64/gum",
+                "../packaging/tools/gum/linux-arm64/gum",
+                "../../packaging/tools/gum/linux-arm64/gum",
+                "tools/gum/linux-arm64/gum",
+                "../tools/gum/linux-arm64/gum",
+                "../../tools/gum/linux-arm64/gum",
+            },
+            .x86_64 => &[_][]const u8{
+                "packaging/tools/gum/linux-x64/gum",
+                "../packaging/tools/gum/linux-x64/gum",
+                "../../packaging/tools/gum/linux-x64/gum",
+                "tools/gum/linux-x64/gum",
+                "../tools/gum/linux-x64/gum",
+                "../../tools/gum/linux-x64/gum",
+            },
+            else => &[_][]const u8{},
         },
-        else => null,
+        else => &[_][]const u8{},
     };
 }
 
-fn findBundledGum(io: Io) ?[]const u8 {
-    const relative = bundledGumRelativePath() orelse return null;
+fn pathExists(io: Io, path: []const u8) bool {
+    const file = Dir.cwd().openFile(io, path, .{}) catch return false;
+    file.close(io);
+    return true;
+}
 
-    if (Dir.cwd().openFile(io, relative, .{})) |file| {
-        file.close(io);
-        return relative;
-    } else |_| {}
+fn gumBinaryFromEnv(environ_map: *const std.process.Environ.Map) ?[]const u8 {
+    const value = environ_map.get(GUM_BINARY_ENV) orelse return null;
+    if (value.len == 0) return null;
+    return value;
+}
 
-    var prefixed_buf: [std.fs.max_path_bytes]u8 = undefined;
-    const parent_relative = std.fmt.bufPrint(&prefixed_buf, "../{s}", .{relative}) catch return null;
-    if (Dir.cwd().openFile(io, parent_relative, .{})) |file| {
-        file.close(io);
-        return parent_relative;
-    } else |_| {}
+fn findAvailableGumBinary(
+    io: Io,
+    environ_map: *const std.process.Environ.Map,
+    candidates: []const []const u8,
+) ?[]const u8 {
+    if (gumBinaryFromEnv(environ_map)) |env_path| {
+        if (pathExists(io, env_path)) return env_path;
+    }
 
-    const grandparent_relative = std.fmt.bufPrint(&prefixed_buf, "../../{s}", .{relative}) catch return null;
-    if (Dir.cwd().openFile(io, grandparent_relative, .{})) |file| {
-        file.close(io);
-        return grandparent_relative;
-    } else |_| {}
+    for (candidates) |candidate| {
+        if (pathExists(io, candidate)) return candidate;
+    }
 
     return null;
+}
+
+fn findBundledGum(io: Io, environ_map: *const std.process.Environ.Map) ?[]const u8 {
+    return findAvailableGumBinary(io, environ_map, bundledGumPathCandidates());
+}
+
+fn gumDebugEnabled(environ_map: *const std.process.Environ.Map) bool {
+    const value = environ_map.get(GUM_DEBUG_ENV) orelse return false;
+    return std.mem.eql(u8, value, "1") or
+        std.mem.eql(u8, value, "true") or
+        std.mem.eql(u8, value, "yes");
 }
 
 fn appendArgOwned(
@@ -137,9 +187,11 @@ fn appendArgOwned(
 fn chooseWithGum(
     allocator: std.mem.Allocator,
     io: Io,
+    environ_map: *const std.process.Environ.Map,
+    stderr_writer: *Io.Writer,
     entries: []const history.Entry,
-) !?u32 {
-    if (!std.process.can_spawn) return null;
+) !GumSelection {
+    if (!std.process.can_spawn) return .failed;
 
     var labels: std.ArrayList([]u8) = .empty;
     defer {
@@ -161,7 +213,8 @@ fn chooseWithGum(
     var argv_list: std.ArrayList([]const u8) = .empty;
     defer argv_list.deinit(allocator);
 
-    try appendArgOwned(allocator, &argv_list, &argv_owned, findBundledGum(io) orelse "gum");
+    const gum_binary = findBundledGum(io, environ_map) orelse "gum";
+    try appendArgOwned(allocator, &argv_list, &argv_owned, gum_binary);
     try appendArgOwned(allocator, &argv_list, &argv_owned, "choose");
     try appendArgOwned(allocator, &argv_list, &argv_owned, "--header");
     try appendArgOwned(allocator, &argv_list, &argv_owned, "Select timer duration");
@@ -171,31 +224,104 @@ fn chooseWithGum(
         try appendArgOwned(allocator, &argv_list, &argv_owned, label);
     }
 
-    const run_result = std.process.run(allocator, io, .{
+    var child = std.process.spawn(io, .{
         .argv = argv_list.items,
-        .timeout = .{ .duration = .{ .clock = .awake, .raw = Io.Duration.fromSeconds(GUM_SELECTION_TIMEOUT_SECONDS) } },
-        .stdout_limit = .limited(4096),
-        .stderr_limit = .limited(4096),
-    }) catch {
-        return null;
+        .stdin = .inherit,
+        .stdout = .pipe,
+        .stderr = .inherit,
+    }) catch |err| {
+        if (gumDebugEnabled(environ_map)) {
+            stderr_writer.print("Debug: gum spawn failed ({s})\n", .{@errorName(err)}) catch {};
+            stderr_writer.flush() catch {};
+        }
+        return .failed;
     };
-    defer {
-        allocator.free(run_result.stdout);
-        allocator.free(run_result.stderr);
+    defer child.kill(io);
+
+    var gum_stdout_buffer: [1024]u8 = undefined;
+    var gum_stdout_reader = child.stdout.?.readerStreaming(io, &gum_stdout_buffer);
+    const gum_stdout = gum_stdout_reader.interface.allocRemaining(allocator, .limited(4096)) catch |err| {
+        if (gumDebugEnabled(environ_map)) {
+            stderr_writer.print("Debug: gum stdout read failed ({s})\n", .{@errorName(err)}) catch {};
+            stderr_writer.flush() catch {};
+        }
+        return .failed;
+    };
+    defer allocator.free(gum_stdout);
+
+    const term = child.wait(io) catch |err| {
+        if (gumDebugEnabled(environ_map)) {
+            stderr_writer.print("Debug: gum wait failed ({s})\n", .{@errorName(err)}) catch {};
+            stderr_writer.flush() catch {};
+        }
+        return .failed;
+    };
+
+    switch (term) {
+        .exited => |code| {
+            if (code != 0) {
+                const trimmed_stdout = std.mem.trim(u8, gum_stdout, " \t\r\n");
+
+                if (code == 130) {
+                    if (gumDebugEnabled(environ_map)) {
+                        stderr_writer.print("Debug: gum canceled (exit code={d})\n", .{code}) catch {};
+                        stderr_writer.flush() catch {};
+                    }
+                    return .canceled;
+                }
+
+                if (code == 1 and trimmed_stdout.len == 0) {
+                    if (gumDebugEnabled(environ_map)) {
+                        stderr_writer.print("Debug: gum canceled (exit code={d})\n", .{code}) catch {};
+                        stderr_writer.flush() catch {};
+                    }
+                    return .canceled;
+                }
+
+                if (gumDebugEnabled(environ_map)) {
+                    stderr_writer.print(
+                        "Debug: gum failed (exit code={d}, stdout_bytes={d})\n",
+                        .{ code, gum_stdout.len },
+                    ) catch {};
+                    stderr_writer.flush() catch {};
+                }
+                return .failed;
+            }
+        },
+        .signal => |signal| {
+            if (signal == std.posix.SIG.INT) {
+                if (gumDebugEnabled(environ_map)) {
+                    stderr_writer.print("Debug: gum canceled (signal=INT)\n", .{}) catch {};
+                    stderr_writer.flush() catch {};
+                }
+                return .canceled;
+            }
+            if (gumDebugEnabled(environ_map)) {
+                stderr_writer.print("Debug: gum failed (signal={s})\n", .{@tagName(signal)}) catch {};
+                stderr_writer.flush() catch {};
+            }
+            return .failed;
+        },
+        else => {
+            if (gumDebugEnabled(environ_map)) {
+                stderr_writer.print("Debug: gum failed (non-exit termination)\n", .{}) catch {};
+                stderr_writer.flush() catch {};
+            }
+            return .failed;
+        },
     }
 
-    switch (run_result.term) {
-        .exited => |code| if (code != 0) return null,
-        else => return null,
-    }
-
-    const selected = std.mem.trim(u8, run_result.stdout, " \t\r\n");
-    if (selected.len == 0) return null;
+    const selected = std.mem.trim(u8, gum_stdout, " \t\r\n");
+    if (selected.len == 0) return .canceled;
 
     for (labels.items, entries) |label, entry| {
-        if (std.mem.eql(u8, selected, label)) return entry.duration_seconds;
+        if (std.mem.eql(u8, selected, label)) return .{ .chosen = entry.duration_seconds };
     }
-    return null;
+    if (gumDebugEnabled(environ_map)) {
+        stderr_writer.print("Debug: gum failed (unknown selection=\"{s}\")\n", .{selected}) catch {};
+        stderr_writer.flush() catch {};
+    }
+    return .failed;
 }
 
 fn chooseWithFallback(
@@ -267,8 +393,10 @@ fn resolveDurationFromHistory(
         return null;
     }
 
-    if (try chooseWithGum(allocator, io, entries)) |selected| {
-        return selected;
+    switch (try chooseWithGum(allocator, io, environ_map, stderr_writer, entries)) {
+        .chosen => |selected| return selected,
+        .canceled => return null,
+        .failed => {},
     }
 
     return try chooseWithFallback(allocator, io, stdout_writer, entries);
@@ -1042,6 +1170,84 @@ test "helpMessage - stable output" {
     try std.testing.expectEqualStrings(
         "Usage: tty_clock_timer [OPTIONS]\n\nOptions:\n  -m, --minutes <num>    Set countdown minutes\n  -s, --seconds <num>    Set countdown seconds\n      list               Select from history durations\n  -h, --help             Show this help message\n\nExample:\n  tty_clock_timer --minutes 25\n  tty_clock_timer -s 90\n  tty_clock_timer list\n",
         helpMessage(),
+    );
+}
+
+test "main/gumBinaryFromEnv - uses override and ignores empty" {
+    const allocator = std.testing.allocator;
+    var environ_map = std.process.Environ.Map.init(allocator);
+    defer environ_map.deinit();
+
+    try std.testing.expectEqual(@as(?[]const u8, null), gumBinaryFromEnv(&environ_map));
+
+    try environ_map.put(GUM_BINARY_ENV, "");
+    try std.testing.expectEqual(@as(?[]const u8, null), gumBinaryFromEnv(&environ_map));
+
+    try environ_map.put(GUM_BINARY_ENV, "/tmp/gum");
+    const selected = gumBinaryFromEnv(&environ_map) orelse {
+        try std.testing.expect(false);
+        return;
+    };
+    try std.testing.expectEqualStrings("/tmp/gum", selected);
+}
+
+test "main/findAvailableGumBinary - prefers env override" {
+    const allocator = std.testing.allocator;
+    const io = std.testing.io;
+
+    const env_file = ".zig-test-gum-env-override";
+    const candidate_file = ".zig-test-gum-candidate";
+    Dir.cwd().deleteFile(io, env_file) catch {};
+    Dir.cwd().deleteFile(io, candidate_file) catch {};
+    defer Dir.cwd().deleteFile(io, env_file) catch {};
+    defer Dir.cwd().deleteFile(io, candidate_file) catch {};
+
+    var env_created = try Dir.cwd().createFile(io, env_file, .{});
+    env_created.close(io);
+    var candidate_created = try Dir.cwd().createFile(io, candidate_file, .{});
+    candidate_created.close(io);
+
+    var environ_map = std.process.Environ.Map.init(allocator);
+    defer environ_map.deinit();
+    try environ_map.put(GUM_BINARY_ENV, env_file);
+
+    const resolved = findAvailableGumBinary(io, &environ_map, &[_][]const u8{candidate_file}) orelse {
+        try std.testing.expect(false);
+        return;
+    };
+    try std.testing.expectEqualStrings(env_file, resolved);
+}
+
+test "main/findAvailableGumBinary - falls back to bundled candidates" {
+    const allocator = std.testing.allocator;
+    const io = std.testing.io;
+
+    const candidate_file = ".zig-test-gum-candidate-only";
+    Dir.cwd().deleteFile(io, candidate_file) catch {};
+    defer Dir.cwd().deleteFile(io, candidate_file) catch {};
+
+    var candidate_created = try Dir.cwd().createFile(io, candidate_file, .{});
+    candidate_created.close(io);
+
+    var environ_map = std.process.Environ.Map.init(allocator);
+    defer environ_map.deinit();
+
+    const resolved = findAvailableGumBinary(io, &environ_map, &[_][]const u8{candidate_file}) orelse {
+        try std.testing.expect(false);
+        return;
+    };
+    try std.testing.expectEqualStrings(candidate_file, resolved);
+}
+
+test "main/findAvailableGumBinary - returns null when unavailable" {
+    const allocator = std.testing.allocator;
+    const io = std.testing.io;
+    var environ_map = std.process.Environ.Map.init(allocator);
+    defer environ_map.deinit();
+
+    try std.testing.expectEqual(
+        @as(?[]const u8, null),
+        findAvailableGumBinary(io, &environ_map, &[_][]const u8{".zig-test-gum-not-found"}),
     );
 }
 
