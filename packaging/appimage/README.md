@@ -30,6 +30,16 @@ packaging/appimage/
 
 ## Fixed Build/Package Interface
 
+`package-appimage.sh` 預設採用 repo-local clean rebuild：每次執行都會先清理以下路徑，再重建 core 與 TUI。
+
+- `packaging/out/appimage/stage`
+- `packaging/out/appimage/AppDir`
+- `core/zig-out`
+- `core/.zig-cache`
+- `tui/dist`
+
+此策略不會清除全域 cache（例如 Bun 全域快取），但會增加單次打包時間，以換取跨機器與跨分支的一致產物。
+
 ## Release Modes
 
 ### Tag-driven (Primary)
@@ -53,6 +63,7 @@ packaging/appimage/
 
 - Fixed input: `core/` source tree
 - Fixed output: `packaging/out/appimage/stage/usr/bin/tty_clock_timer`
+- 補充：`package-appimage.sh` 會自動執行此步驟；此命令主要用於獨立檢查 core 產物。
 
 ### 2) Package AppImage Artifact
 
@@ -61,7 +72,7 @@ APPIMAGE_VERSION=<version> ./packaging/appimage/scripts/package-appimage.sh
 ```
 
 - Fixed input:
-  - `packaging/out/appimage/stage/usr/bin/tty_clock_timer`
+  - `core/` source tree（由腳本內部強制 clean rebuild）
   - `tui/` runtime tree
   - `packaging/appimage/assets/*`
 - Fixed output: `packaging/out/appimage/tty-clock-timer-<version>-linux-x86_64.AppImage`

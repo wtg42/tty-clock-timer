@@ -8,6 +8,7 @@ STAGE_DIR="${OUT_DIR}/stage"
 APPDIR="${OUT_DIR}/AppDir"
 ASSETS_DIR="${ROOT_DIR}/packaging/appimage/assets"
 TUI_SRC_DIR="${ROOT_DIR}/tui"
+CORE_DIR="${ROOT_DIR}/core"
 
 APPIMAGE_VERSION="${APPIMAGE_VERSION:-dev}"
 APPIMAGE_NAME="tty-clock-timer-${APPIMAGE_VERSION}-linux-x86_64.AppImage"
@@ -27,15 +28,20 @@ else
 fi
 APPIMAGE_PATH="${OUT_DIR}/${APPIMAGE_NAME}"
 
-if [[ ! -x "${STAGE_DIR}/usr/bin/tty_clock_timer" ]]; then
-  "${SCRIPT_DIR}/build-core.sh"
-fi
+echo "[package-appimage] Cleaning repo-local build artifacts..."
+rm -rf "${STAGE_DIR}" \
+       "${APPDIR}" \
+       "${CORE_DIR}/zig-out" \
+       "${CORE_DIR}/.zig-cache" \
+       "${TUI_SRC_DIR}/dist"
+
+echo "[package-appimage] Rebuilding core binary..."
+"${SCRIPT_DIR}/build-core.sh"
 
 # Build TUI bundle (replaces copying raw source + node_modules)
 echo "[package-appimage] Building TUI bundle..."
 (cd "${TUI_SRC_DIR}" && bun run build)
 
-rm -rf "${APPDIR}"
 install -d "${APPDIR}/usr/bin"
 install -d "${APPDIR}/usr/lib/tty-clock-timer/tui"
 install -d "${APPDIR}/usr/share/applications"
