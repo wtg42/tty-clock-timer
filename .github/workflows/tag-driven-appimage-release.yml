@@ -64,6 +64,16 @@ jobs:
           curl -fsSL -o packaging/tools/appimagetool.AppImage "https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage"
           chmod 0755 packaging/tools/appimagetool.AppImage
 
+      - name: Prepare bundled gum
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if ! ./packaging/appimage/scripts/fetch-gum.sh; then
+            echo "::error title=Release stage failed::stage=prepare-tools (gum)"
+            exit 1
+          fi
+
       - name: Build stage (core)
         shell: bash
         run: |
