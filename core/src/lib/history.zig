@@ -131,7 +131,6 @@ pub fn recordDuration(
         error.InvalidHistoryFormat => try allocator.alloc(Entry, 0),
         else => |e| return e,
     };
-    defer allocator.free(entries);
 
     var list = std.ArrayList(Entry).fromOwnedSlice(entries);
     defer list.deinit(allocator);
