@@ -22,7 +22,7 @@ TBD - created by archiving change appimage-packaging-foundation. Update Purpose 
 - **THEN** MUST 不存在 `node_modules` 目錄，TUI 部分僅包含 JS bundle 與 native .so
 
 ### Requirement: 發版流程先採 manual release
-系統 MUST 提供手動發版步驟與必要輸出清單，且 MUST 不要求本次變更內建自動化 release pipeline 才能發布。系統 MAY 提供以 tag-driven workflow 執行的自動化 release 路徑，但該路徑 MUST 與 manual release 共存，且在自動化不可用時維護者仍 MUST 可透過 manual release 完成交付。打包腳本 MUST 自動探測 appimagetool 路徑，使用者無需手動設定 `APPIMAGETOOL_BIN` 即可完成打包。打包腳本 MUST 在每次打包前清除專案內 build 產物並強制重建 core 與 TUI，以避免沿用舊的 stage binary；清理範圍 MUST 限制在專案目錄內，不得要求清除全域 cache。針對 Linux x86_64 AppImage，打包流程 MUST 將 `gum` 視為 runtime tool 一併打包，且來源 MUST 來自 `packaging/tools/gum/linux-x64/gum`（位於 `core/` 目錄外）。打包與驗證流程 MUST 檢查來源與 AppDir 內的 `gum` 均存在且具 executable 權限，檢查失敗時 MUST 以非零退出碼結束。
+系統 MUST 提供手動發版步驟與必要輸出清單，且 MUST 不要求本次變更內建自動化 release pipeline 才能發布。系統 MAY 提供以 tag-driven workflow 執行的自動化 release 路徑，但該路徑 MUST 與 manual release 共存，且在自動化不可用時維護者仍 MUST 可透過 manual release 完成交付。打包腳本 MUST 自動探測 appimagetool 路徑，使用者無需手動設定 `APPIMAGETOOL_BIN` 即可完成打包。打包腳本 MUST 在每次打包前清除專案內 build 產物並強制重建 core 與 TUI，以避免沿用舊的 stage binary；清理範圍 MUST 限制在專案目錄內，不得要求清除全域 cache。針對 Linux x86_64 AppImage，打包流程 MUST 將 `gum` 視為 runtime tool 一併打包，且來源 MUST 來自 `packaging/tools/gum/linux-x64/gum`（位於 `core/` 目錄外）。打包與驗證流程 MUST 檢查來源與 AppDir 內的 `gum` 均存在且具 executable 權限，檢查失敗時 MUST 以非零退出碼結束。系統 MUST 提供共用腳本在打包前取得 `gum`，該腳本 MUST 固定版本並驗證 checksum，且本機與 CI MUST 使用同一份腳本邏輯。
 
 #### Scenario: 以手動流程完成首次發版
 - **WHEN** 維護者依照文件進行 release
@@ -53,4 +53,9 @@ TBD - created by archiving change appimage-packaging-foundation. Update Purpose 
 - **WHEN** 維護者執行 AppImage verify 腳本
 - **THEN** 腳本 MUST 檢查 `AppDir/usr/lib/tty-clock-timer/tools/gum/linux-x64/gum` 存在且可執行
 - **AND** 若任一檢查失敗，verify MUST 回報失敗狀態
+
+#### Scenario: 本機使用共用 fetch 腳本準備 gum
+- **WHEN** 維護者在本機執行 AppImage 打包前置流程
+- **THEN** 維護者 MUST 可透過 `packaging/appimage/scripts/fetch-gum.sh` 取得 `packaging/tools/gum/linux-x64/gum`
+- **AND** 該流程 MUST 驗證下載檔案 checksum，失敗時 MUST 中止
 
