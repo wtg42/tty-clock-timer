@@ -193,6 +193,36 @@ fn sortByLastUsedDesc(entries: []Entry) void {
     }
 }
 
+pub fn deleteEntriesByLabels(
+    allocator: std.mem.Allocator,
+    entries: []const Entry,
+    to_delete_labels: []const []const u8,
+) std.mem.Allocator.Error![]Entry {
+    var filtered: std.ArrayList(Entry) = .empty;
+    defer filtered.deinit(allocator);
+
+    outer: for (entries) |entry| {
+        const label = try formatDurationLabel(allocator, entry.duration_seconds);
+        defer allocator.free(label);
+
+        for (to_delete_labels) |to_delete| {
+            if (std.mem.eql(u8, label, to_delete)) {
+                continue :outer;
+            }
+        }
+
+        try filtered.append(allocator, entry);
+    }
+
+    return filtered.toOwnedSlice(allocator);
+}
+
+fn formatDurationLabel(allocator: std.mem.Allocator, duration_seconds: u32) std.mem.Allocator.Error![]u8 {
+    const minutes = duration_seconds / 60;
+    const seconds = duration_seconds % 60;
+    return std.fmt.allocPrint(allocator, "{d:0>2}:{d:0>2} ({d}s)", .{ minutes, seconds, duration_seconds });
+}
+
 test "history/resolveHistoryPath - prefers XDG_STATE_HOME" {
     const allocator = std.testing.allocator;
     var environ_map = std.process.Environ.Map.init(allocator);
@@ -235,4 +265,51 @@ test "history/selectionFromInput - handles choose cancel invalid" {
     try std.testing.expectEqual(SelectionResult.canceled, selectionFromInput("q", 3));
     try std.testing.expectEqual(SelectionResult.invalid, selectionFromInput("9", 3));
     try std.testing.expectEqual(SelectionResult.invalid, selectionFromInput("abc", 3));
+}
+
+test "history/deleteEntriesByLabels - delete single entry" {
+    const allocator = std.testing.allocator;
+    const entries = &[_]Entry{
+        .{ .duration_seconds = 1500, .last_used_at = 100 },
+        .{ .duration_seconds = 900, .last_used_at = 200 },
+        .{ .duration_seconds = 300, .last_used_at = 150 },
+    };
+
+    const to_delete = &[_][]const u8{"25:00 (1500s)"};
+    const result = try deleteEntriesByLabels(allocator, entries, to_delete);
+    defer allocator.free(result);
+
+    try std.testing.expectEqual(@as(usize, 2), result.len);
+    try std.testing.expectEqual(@as(u32, 900), result[0].duration_seconds);
+    try std.testing.expectEqual(@as(u32, 300), result[1].duration_seconds);
+}
+
+test "history/deleteEntriesByLabels - delete multiple entries" {
+    const allocator = std.testing.allocator;
+    const entries = &[_]Entry{
+        .{ .duration_seconds = 1500, .last_used_at = 100 },
+        .{ .duration_seconds = 900, .last_used_at = 200 },
+        .{ .duration_seconds = 300, .last_used_at = 150 },
+    };
+
+    const to_delete = &[_][]const u8{ "25:00 (1500s)", "05:00 (300s)" };
+    const result = try deleteEntriesByLabels(allocator, entries, to_delete);
+    defer allocator.free(result);
+
+    try std.testing.expectEqual(@as(usize, 1), result.len);
+    try std.testing.expectEqual(@as(u32, 900), result[0].duration_seconds);
+}
+
+test "history/deleteEntriesByLabels - delete all entries" {
+    const allocator = std.testing.allocator;
+    const entries = &[_]Entry{
+        .{ .duration_seconds = 1500, .last_used_at = 100 },
+        .{ .duration_seconds = 900, .last_used_at = 200 },
+    };
+
+    const to_delete = &[_][]const u8{ "25:00 (1500s)", "15:00 (900s)" };
+    const result = try deleteEntriesByLabels(allocator, entries, to_delete);
+    defer allocator.free(result);
+
+    try std.testing.expectEqual(@as(usize, 0), result.len);
 }

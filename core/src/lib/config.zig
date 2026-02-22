@@ -18,6 +18,7 @@ pub const Config = struct {
 pub const Command = enum {
     start,
     list,
+    list_delete,
 };
 
 /// CLI parse errors surfaced to main.
@@ -83,9 +84,15 @@ pub fn parseArgsFromSlice(args: []const []const u8) !Config {
     }
 
     if (isListArg(first_arg)) {
-        if (args.len != 1) return ParseError.UnknownArgument;
-        config.command = .list;
-        return config;
+        if (args.len == 1) {
+            config.command = .list;
+            return config;
+        }
+        if (args.len == 2 and isDeleteArg(args[1])) {
+            config.command = .list_delete;
+            return config;
+        }
+        return ParseError.UnknownArgument;
     }
 
     // Step C: Parse minutes and normalize to seconds.
@@ -136,6 +143,11 @@ fn isSecondsArg(arg: []const u8) bool {
 /// Returns true when `arg` is list subcommand.
 fn isListArg(arg: []const u8) bool {
     return std.mem.eql(u8, arg, "list");
+}
+
+/// Returns true when `arg` is delete flag.
+fn isDeleteArg(arg: []const u8) bool {
+    return std.mem.eql(u8, arg, "--delete");
 }
 
 test "parseArgsFromSlice - valid minutes" {
@@ -205,6 +217,22 @@ test "parseArgsFromSlice - list subcommand" {
 test "parseArgsFromSlice - list with extra argument is invalid" {
     const args = &[_][]const u8{ "list", "extra" };
     try std.testing.expectError(ParseError.UnknownArgument, parseArgsFromSlice(args));
+}
+
+test "parseArgsFromSlice - list delete subcommand" {
+    const args = &[_][]const u8{ "list", "--delete" };
+    const config = try parseArgsFromSlice(args);
+    try std.testing.expectEqual(Command.list_delete, config.command);
+    try std.testing.expectEqual(@as(u32, 0), config.duration_seconds);
+    try std.testing.expectEqual(false, config.show_help);
+}
+
+test "parseArgsFromSlice - list alone still works" {
+    const args = &[_][]const u8{"list"};
+    const config = try parseArgsFromSlice(args);
+    try std.testing.expectEqual(Command.list, config.command);
+    try std.testing.expectEqual(@as(u32, 0), config.duration_seconds);
+    try std.testing.expectEqual(false, config.show_help);
 }
 
 test "parseArgsFromSlice - missing minutes value" {

@@ -26,6 +26,12 @@ const GumSelection = union(enum) {
     failed,
 };
 
+const GumMultiSelection = union(enum) {
+    chosen: [][]const u8,
+    canceled,
+    failed,
+};
+
 const UiRuntimeContract = struct {
     cwd: []const u8,
     entry: []const u8,
@@ -54,12 +60,14 @@ fn helpMessage() []const u8 {
         "  -m, --minutes <num>    Set countdown minutes\n" ++
         "  -s, --seconds <num>    Set countdown seconds\n" ++
         "      list               Select from history durations\n" ++
+        "      list --delete      Delete history durations\n" ++
         "  -h, --help             Show this help message\n" ++
         "\n" ++
         "Example:\n" ++
         "  tty_clock_timer --minutes 25\n" ++
         "  tty_clock_timer -s 90\n" ++
-        "  tty_clock_timer list\n";
+        "  tty_clock_timer list\n" ++
+        "  tty_clock_timer list --delete\n";
 }
 
 fn timerStateToStatus(state: timer_mod.TimerState) []const u8 {
@@ -324,6 +332,154 @@ fn chooseWithGum(
     return .failed;
 }
 
+fn deleteWithGum(
+    allocator: std.mem.Allocator,
+    io: Io,
+    environ_map: *const std.process.Environ.Map,
+    stderr_writer: *Io.Writer,
+    entries: []const history.Entry,
+) !GumMultiSelection {
+    if (!std.process.can_spawn) return .failed;
+
+    var labels: std.ArrayList([]u8) = .empty;
+    defer {
+        for (labels.items) |label| allocator.free(label);
+        labels.deinit(allocator);
+    }
+
+    try labels.ensureTotalCapacity(allocator, entries.len);
+    for (entries) |entry| {
+        try labels.append(allocator, try formatDurationLabel(allocator, entry.duration_seconds));
+    }
+
+    var argv_owned: std.ArrayList([]u8) = .empty;
+    defer {
+        for (argv_owned.items) |value| allocator.free(value);
+        argv_owned.deinit(allocator);
+    }
+
+    var argv_list: std.ArrayList([]const u8) = .empty;
+    defer argv_list.deinit(allocator);
+
+    const gum_binary = findBundledGum(io, environ_map) orelse "gum";
+    try appendArgOwned(allocator, &argv_list, &argv_owned, gum_binary);
+    try appendArgOwned(allocator, &argv_list, &argv_owned, "choose");
+    try appendArgOwned(allocator, &argv_list, &argv_owned, "--no-limit");
+    try appendArgOwned(allocator, &argv_list, &argv_owned, "--header");
+    try appendArgOwned(allocator, &argv_list, &argv_owned, "Select durations to delete");
+    try appendArgOwned(allocator, &argv_list, &argv_owned, "--cursor");
+    try appendArgOwned(allocator, &argv_list, &argv_owned, "> ");
+    for (labels.items) |label| {
+        try appendArgOwned(allocator, &argv_list, &argv_owned, label);
+    }
+
+    var child = std.process.spawn(io, .{
+        .argv = argv_list.items,
+        .stdin = .inherit,
+        .stdout = .pipe,
+        .stderr = .inherit,
+    }) catch |err| {
+        if (gumDebugEnabled(environ_map)) {
+            stderr_writer.print("Debug: gum spawn failed ({s})\n", .{@errorName(err)}) catch {};
+            stderr_writer.flush() catch {};
+        }
+        return .failed;
+    };
+    defer child.kill(io);
+
+    var gum_stdout_buffer: [4096]u8 = undefined;
+    var gum_stdout_reader = child.stdout.?.readerStreaming(io, &gum_stdout_buffer);
+    const gum_stdout = gum_stdout_reader.interface.allocRemaining(allocator, .limited(16384)) catch |err| {
+        if (gumDebugEnabled(environ_map)) {
+            stderr_writer.print("Debug: gum stdout read failed ({s})\n", .{@errorName(err)}) catch {};
+            stderr_writer.flush() catch {};
+        }
+        return .failed;
+    };
+    defer allocator.free(gum_stdout);
+
+    const term = child.wait(io) catch |err| {
+        if (gumDebugEnabled(environ_map)) {
+            stderr_writer.print("Debug: gum wait failed ({s})\n", .{@errorName(err)}) catch {};
+            stderr_writer.flush() catch {};
+        }
+        return .failed;
+    };
+
+    switch (term) {
+        .exited => |code| {
+            if (code != 0) {
+                const trimmed_stdout = std.mem.trim(u8, gum_stdout, " \t\r\n");
+
+                if (code == 130) {
+                    if (gumDebugEnabled(environ_map)) {
+                        stderr_writer.print("Debug: gum canceled (exit code={d})\n", .{code}) catch {};
+                        stderr_writer.flush() catch {};
+                    }
+                    return .canceled;
+                }
+
+                if (code == 1 and trimmed_stdout.len == 0) {
+                    if (gumDebugEnabled(environ_map)) {
+                        stderr_writer.print("Debug: gum canceled (exit code={d})\n", .{code}) catch {};
+                        stderr_writer.flush() catch {};
+                    }
+                    return .canceled;
+                }
+
+                if (gumDebugEnabled(environ_map)) {
+                    stderr_writer.print(
+                        "Debug: gum failed (exit code={d}, stdout_bytes={d})\n",
+                        .{ code, gum_stdout.len },
+                    ) catch {};
+                    stderr_writer.flush() catch {};
+                }
+                return .failed;
+            }
+        },
+        .signal => |signal| {
+            if (signal == std.posix.SIG.INT) {
+                if (gumDebugEnabled(environ_map)) {
+                    stderr_writer.print("Debug: gum canceled (signal=INT)\n", .{}) catch {};
+                    stderr_writer.flush() catch {};
+                }
+                return .canceled;
+            }
+            if (gumDebugEnabled(environ_map)) {
+                stderr_writer.print("Debug: gum failed (signal={s})\n", .{@tagName(signal)}) catch {};
+                stderr_writer.flush() catch {};
+            }
+            return .failed;
+        },
+        else => {
+            if (gumDebugEnabled(environ_map)) {
+                stderr_writer.print("Debug: gum failed (non-exit termination)\n", .{}) catch {};
+                stderr_writer.flush() catch {};
+            }
+            return .failed;
+        },
+    }
+
+    const selected = std.mem.trim(u8, gum_stdout, " \t\r\n");
+    if (selected.len == 0) return .canceled;
+
+    var selected_labels: std.ArrayList([]const u8) = .empty;
+    defer selected_labels.deinit(allocator);
+
+    var line_iter = std.mem.splitSequence(u8, selected, "\n");
+    while (line_iter.next()) |line| {
+        const trimmed = std.mem.trim(u8, line, " \t\r");
+        if (trimmed.len > 0) {
+            const owned = try allocator.dupe(u8, trimmed);
+            try selected_labels.append(allocator, owned);
+        }
+    }
+
+    if (selected_labels.items.len == 0) return .canceled;
+
+    return .{ .chosen = try selected_labels.toOwnedSlice(allocator) };
+}
+
 fn chooseWithFallback(
     allocator: std.mem.Allocator,
     io: Io,
@@ -400,6 +556,75 @@ fn resolveDurationFromHistory(
     }
 
     return try chooseWithFallback(allocator, io, stdout_writer, entries);
+}
+
+fn resolveDeletionFromHistory(
+    allocator: std.mem.Allocator,
+    io: Io,
+    stdout_writer: *Io.Writer,
+    stderr_writer: *Io.Writer,
+    environ_map: *const std.process.Environ.Map,
+) !void {
+    const history_path = history.resolveHistoryPath(allocator, environ_map) catch {
+        try stdout_writer.print("no history\n", .{});
+        try stdout_writer.flush();
+        return;
+    };
+    defer allocator.free(history_path);
+
+    const entries = history.loadEntries(allocator, io, history_path) catch |err| switch (err) {
+        error.InvalidHistoryFormat => {
+            try stdout_writer.print("no history\n", .{});
+            try stdout_writer.flush();
+            return;
+        },
+        else => return err,
+    };
+    defer allocator.free(entries);
+
+    if (entries.len == 0) {
+        try stdout_writer.print("no history\n", .{});
+        try stdout_writer.flush();
+        return;
+    }
+
+    switch (try deleteWithGum(allocator, io, environ_map, stderr_writer, entries)) {
+        .chosen => |selected_labels| {
+            defer {
+                for (selected_labels) |label| allocator.free(label);
+                allocator.free(selected_labels);
+            }
+
+            const remaining = try history.deleteEntriesByLabels(allocator, entries, selected_labels);
+            defer allocator.free(remaining);
+
+            history.saveEntries(allocator, io, history_path, remaining) catch |err| {
+                try stderr_writer.print("Error: Failed to save history ({s})\n", .{@errorName(err)});
+                try stderr_writer.flush();
+                return;
+            };
+
+            if (remaining.len == 0) {
+                try stdout_writer.print("no history\n", .{});
+            } else {
+                var index: usize = 0;
+                while (index < remaining.len) : (index += 1) {
+                    const label = try formatDurationLabel(allocator, remaining[index].duration_seconds);
+                    defer allocator.free(label);
+                    try stdout_writer.print("{s}\n", .{label});
+                }
+            }
+        },
+        .canceled => {
+            try stdout_writer.print("no history\n", .{});
+        },
+        .failed => {
+            try stderr_writer.print("Error: gum selection failed\n", .{});
+            try stderr_writer.flush();
+        },
+    }
+
+    try stdout_writer.flush();
 }
 
 /// Consumes buffered stdin input and returns `true` when quit is requested.
@@ -952,6 +1177,17 @@ pub fn main(init: std.process.Init) !void {
         return;
     }
 
+    if (config.command == .list_delete) {
+        try resolveDeletionFromHistory(
+            allocator,
+            io,
+            stdout_writer,
+            stderr_writer,
+            init.environ_map,
+        );
+        return;
+    }
+
     const total_duration_seconds = switch (config.command) {
         .start => config.duration_seconds,
         .list => (try resolveDurationFromHistory(
@@ -961,6 +1197,7 @@ pub fn main(init: std.process.Init) !void {
             stderr_writer,
             init.environ_map,
         )) orelse return,
+        .list_delete => unreachable,
     };
     const total_duration_ns = @as(u64, total_duration_seconds) * std.time.ns_per_s;
 
@@ -1168,7 +1405,7 @@ test "configErrorMessage - mapping" {
 
 test "helpMessage - stable output" {
     try std.testing.expectEqualStrings(
-        "Usage: tty_clock_timer [OPTIONS]\n\nOptions:\n  -m, --minutes <num>    Set countdown minutes\n  -s, --seconds <num>    Set countdown seconds\n      list               Select from history durations\n  -h, --help             Show this help message\n\nExample:\n  tty_clock_timer --minutes 25\n  tty_clock_timer -s 90\n  tty_clock_timer list\n",
+        "Usage: tty_clock_timer [OPTIONS]\n\nOptions:\n  -m, --minutes <num>    Set countdown minutes\n  -s, --seconds <num>    Set countdown seconds\n      list               Select from history durations\n      list --delete      Delete history durations\n  -h, --help             Show this help message\n\nExample:\n  tty_clock_timer --minutes 25\n  tty_clock_timer -s 90\n  tty_clock_timer list\n  tty_clock_timer list --delete\n",
         helpMessage(),
     );
 }
