@@ -1085,7 +1085,7 @@ pub fn main(init: std.process.Init) !void {
     var socket_writer_buffer: [2048]u8 = undefined;
     var socket_reader: std.Io.net.Stream.Reader = undefined;
     var socket_writer: std.Io.net.Stream.Writer = undefined;
-    const tick_duration = Io.Clock.Duration{ .clock = .awake, .raw = Io.Duration.fromSeconds(1) };
+    const tick_duration = Io.Clock.Duration{ .clock = .awake, .raw = Io.Duration.fromMilliseconds(200) };
     var timer_finished_notified = false;
 
     if (socket_server) |*server| {
