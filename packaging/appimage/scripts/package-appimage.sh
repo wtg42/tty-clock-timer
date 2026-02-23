@@ -78,8 +78,8 @@ install -d "${APPDIR}/usr/share/applications"
 install -d "${APPDIR}/usr/share/icons/hicolor/scalable/apps"
 
 # 安裝二進檔與資源
-if [[ ! -f "${STAGE_DIR}/usr/bin/tty_clock_timer" ]]; then
-  echo "[error] Core 二進檔不存在：${STAGE_DIR}/usr/bin/tty_clock_timer" >&2
+if [[ ! -f "${STAGE_DIR}/usr/bin/tic" ]]; then
+  echo "[error] Core 二進檔不存在：${STAGE_DIR}/usr/bin/tic" >&2
   exit 1
 fi
 
@@ -88,7 +88,7 @@ if [[ ! -d "${TUI_SRC_DIR}/dist" ]]; then
   exit 1
 fi
 
-install -m 0755 "${STAGE_DIR}/usr/bin/tty_clock_timer" "${APPDIR}/usr/bin/tty_clock_timer"
+install -m 0755 "${STAGE_DIR}/usr/bin/tic" "${APPDIR}/usr/bin/tic"
 cp -R "${TUI_SRC_DIR}/dist/." "${APPDIR}/usr/lib/tty-clock-timer/tui/"
 install -m 0755 "${GUM_SRC}" "${APPDIR}/usr/lib/tty-clock-timer/tools/gum/linux-x64/gum"
 
@@ -109,7 +109,7 @@ export TTY_CLOCK_TUI_CWD="${TTY_CLOCK_TUI_CWD:-${APPDIR}/usr/lib/tty-clock-timer
 export TTY_CLOCK_TUI_ENTRY="${TTY_CLOCK_TUI_ENTRY:-index.js}"
 export TTY_CLOCK_GUM_BIN="${TTY_CLOCK_GUM_BIN:-${APPDIR}/usr/lib/tty-clock-timer/tools/gum/linux-x64/gum}"
 
-exec "${APPDIR}/usr/bin/tty_clock_timer" "$@"
+exec "${APPDIR}/usr/bin/tic" "$@"
 EOF
 chmod 0755 "${APPDIR}/AppRun"
 

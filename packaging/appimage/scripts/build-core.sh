@@ -11,8 +11,8 @@ STAGE_DIR="${OUT_DIR}/stage"
 
 TARGET="x86_64-linux"
 OPTIMIZE="ReleaseSafe"
-CORE_BINARY="${CORE_DIR}/zig-out/bin/tty_clock_timer"
-STAGED_BINARY="${STAGE_DIR}/usr/bin/tty_clock_timer"
+CORE_BINARY="${CORE_DIR}/zig-out/bin/tic"
+STAGED_BINARY="${STAGE_DIR}/usr/bin/tic"
 
 echo "[build-core] 編譯設定：target=${TARGET}, optimize=${OPTIMIZE}"
 

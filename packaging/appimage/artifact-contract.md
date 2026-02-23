@@ -6,7 +6,7 @@
 
 | Artifact | Required | Contract Path | Notes |
 | --- | --- | --- | --- |
-| Core binary | Yes | `usr/bin/tty_clock_timer` | AppImage 內唯一主入口 |
+| Core binary | Yes | `usr/bin/tic` | AppImage 內唯一主入口 |
 | TUI runtime root | Yes | `usr/lib/tty-clock-timer/tui` | 由 core 作為 `cwd` 啟動 |
 | TUI entry file | Yes | `index.js` | 可用 `TTY_CLOCK_TUI_ENTRY` 覆蓋 |
 | TUI native library | Yes | `libopentui.so` | 與 JS bundle 共同存在於 runtime root |

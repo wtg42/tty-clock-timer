@@ -54,7 +54,7 @@ const UiCwdCandidates = struct {
 };
 
 fn helpMessage() []const u8 {
-    return "Usage: tty_clock_timer [OPTIONS]\n" ++
+    return "Usage: tic [OPTIONS]\n" ++
         "\n" ++
         "Options:\n" ++
         "  -m, --minutes <num>    Set countdown minutes\n" ++
@@ -64,10 +64,10 @@ fn helpMessage() []const u8 {
         "  -h, --help             Show this help message\n" ++
         "\n" ++
         "Example:\n" ++
-        "  tty_clock_timer --minutes 25\n" ++
-        "  tty_clock_timer -s 90\n" ++
-        "  tty_clock_timer list\n" ++
-        "  tty_clock_timer list --delete\n";
+        "  tic --minutes 25\n" ++
+        "  tic -s 90\n" ++
+        "  tic list\n" ++
+        "  tic list --delete\n";
 }
 
 fn timerStateToStatus(state: timer_mod.TimerState) []const u8 {
@@ -1405,7 +1405,7 @@ test "configErrorMessage - mapping" {
 
 test "helpMessage - stable output" {
     try std.testing.expectEqualStrings(
-        "Usage: tty_clock_timer [OPTIONS]\n\nOptions:\n  -m, --minutes <num>    Set countdown minutes\n  -s, --seconds <num>    Set countdown seconds\n      list               Select from history durations\n      list --delete      Delete history durations\n  -h, --help             Show this help message\n\nExample:\n  tty_clock_timer --minutes 25\n  tty_clock_timer -s 90\n  tty_clock_timer list\n  tty_clock_timer list --delete\n",
+        "Usage: tic [OPTIONS]\n\nOptions:\n  -m, --minutes <num>    Set countdown minutes\n  -s, --seconds <num>    Set countdown seconds\n      list               Select from history durations\n      list --delete      Delete history durations\n  -h, --help             Show this help message\n\nExample:\n  tic --minutes 25\n  tic -s 90\n  tic list\n  tic list --delete\n",
         helpMessage(),
     );
 }
