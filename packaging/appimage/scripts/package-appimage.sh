@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# package-appimage.sh - 打包 AppImage 二進檔
+# 防呆流程：自動檢查並下載必要依賴，然後進行編譯與打包
 set -euo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
@@ -13,7 +15,16 @@ GUM_SRC="${ROOT_DIR}/packaging/tools/gum/linux-x64/gum"
 
 APPIMAGE_VERSION="${APPIMAGE_VERSION:-dev}"
 APPIMAGE_NAME="tty-clock-timer-${APPIMAGE_VERSION}-linux-x86_64.AppImage"
+APPIMAGE_PATH="${OUT_DIR}/${APPIMAGE_NAME}"
 
+# 第一步：檢查與下載必要依賴
+echo "[package-appimage] 檢查並下載依賴工具..."
+if ! bash "${SCRIPT_DIR}/setup-deps.sh"; then
+  echo "[error] 依賴檢查失敗，無法繼續打包" >&2
+  exit 1
+fi
+
+# 決定使用哪個 appimagetool
 if [[ -n "${APPIMAGETOOL_BIN:-}" ]]; then
   : # 使用者明確指定
 elif [[ -x "${ROOT_DIR}/packaging/tools/appimagetool.AppImage" ]]; then
@@ -21,43 +32,61 @@ elif [[ -x "${ROOT_DIR}/packaging/tools/appimagetool.AppImage" ]]; then
 elif command -v appimagetool &>/dev/null; then
   APPIMAGETOOL_BIN="appimagetool"
 else
-  echo "[error] appimagetool not found." >&2
-  echo "  Option 1: Place it at packaging/tools/appimagetool.AppImage" >&2
-  echo "  Option 2: Set APPIMAGETOOL_BIN=/path/to/appimagetool" >&2
-  echo "  Download: https://github.com/AppImage/appimagetool/releases" >&2
+  echo "[error] appimagetool 仍未找到，無法繼續" >&2
   exit 1
 fi
-APPIMAGE_PATH="${OUT_DIR}/${APPIMAGE_NAME}"
 
-echo "[package-appimage] Cleaning repo-local build artifacts..."
+# 第二步：清理舊的編譯產物
+echo "[package-appimage] 清理舊的編譯產物..."
 rm -rf "${STAGE_DIR}" \
        "${APPDIR}" \
        "${CORE_DIR}/zig-out" \
        "${CORE_DIR}/.zig-cache" \
        "${TUI_SRC_DIR}/dist"
 
-echo "[package-appimage] Rebuilding core binary..."
-"${SCRIPT_DIR}/build-core.sh"
+# 第三步：編譯 Core 二進檔
+echo "[package-appimage] 編譯 Core 二進檔..."
+if ! "${SCRIPT_DIR}/build-core.sh"; then
+  echo "[error] Core 編譯失敗" >&2
+  exit 1
+fi
 
+# 第四步：驗證 gum 存在且可執行
 if [[ ! -f "${GUM_SRC}" ]]; then
-  echo "[error] bundled gum not found: ${GUM_SRC}" >&2
+  echo "[error] gum 未找到（不應該發生，setup-deps.sh 應已下載）：${GUM_SRC}" >&2
   exit 1
 fi
 
 if [[ ! -x "${GUM_SRC}" ]]; then
-  echo "[error] bundled gum is not executable: ${GUM_SRC}" >&2
+  echo "[error] gum 不可執行：${GUM_SRC}" >&2
   exit 1
 fi
 
-# Build TUI bundle (replaces copying raw source + node_modules)
-echo "[package-appimage] Building TUI bundle..."
-(cd "${TUI_SRC_DIR}" && bun run build)
+# 第五步：編譯 TUI bundle
+echo "[package-appimage] 編譯 TUI bundle..."
+if ! (cd "${TUI_SRC_DIR}" && bun run build); then
+  echo "[error] TUI 編譯失敗" >&2
+  exit 1
+fi
 
+# 第六步：組裝 AppDir 結構
+echo "[package-appimage] 組裝 AppDir 結構..."
 install -d "${APPDIR}/usr/bin"
 install -d "${APPDIR}/usr/lib/tty-clock-timer/tui"
 install -d "${APPDIR}/usr/lib/tty-clock-timer/tools/gum/linux-x64"
 install -d "${APPDIR}/usr/share/applications"
 install -d "${APPDIR}/usr/share/icons/hicolor/scalable/apps"
+
+# 安裝二進檔與資源
+if [[ ! -f "${STAGE_DIR}/usr/bin/tty_clock_timer" ]]; then
+  echo "[error] Core 二進檔不存在：${STAGE_DIR}/usr/bin/tty_clock_timer" >&2
+  exit 1
+fi
+
+if [[ ! -d "${TUI_SRC_DIR}/dist" ]]; then
+  echo "[error] TUI 編譯輸出不存在：${TUI_SRC_DIR}/dist" >&2
+  exit 1
+fi
 
 install -m 0755 "${STAGE_DIR}/usr/bin/tty_clock_timer" "${APPDIR}/usr/bin/tty_clock_timer"
 cp -R "${TUI_SRC_DIR}/dist/." "${APPDIR}/usr/lib/tty-clock-timer/tui/"
@@ -69,6 +98,8 @@ install -m 0644 "${ASSETS_DIR}/tty-clock-timer.svg" "${APPDIR}/usr/share/icons/h
 ln -sf "usr/share/applications/tty-clock-timer.desktop" "${APPDIR}/tty-clock-timer.desktop"
 ln -sf "usr/share/icons/hicolor/scalable/apps/tty-clock-timer.svg" "${APPDIR}/tty-clock-timer.svg"
 
+# 第七步：生成 AppRun 啟動器
+echo "[package-appimage] 生成 AppRun 啟動器..."
 cat > "${APPDIR}/AppRun" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -82,7 +113,30 @@ exec "${APPDIR}/usr/bin/tty_clock_timer" "$@"
 EOF
 chmod 0755 "${APPDIR}/AppRun"
 
+# 第八步：打包成 AppImage
+echo "[package-appimage] 使用 appimagetool 打包..."
+if [[ ! -x "${APPIMAGETOOL_BIN}" ]]; then
+  echo "[error] appimagetool 不可執行：${APPIMAGETOOL_BIN}" >&2
+  exit 1
+fi
+
+mkdir -p "${OUT_DIR}"
 ARCH=x86_64 "${APPIMAGETOOL_BIN}" "${APPDIR}" "${APPIMAGE_PATH}"
 chmod 0755 "${APPIMAGE_PATH}"
 
-echo "[package-appimage] artifact: ${APPIMAGE_PATH}"
+# 驗證 AppImage 是否成功生成
+if [[ ! -f "${APPIMAGE_PATH}" ]]; then
+  echo "[error] AppImage 生成失敗" >&2
+  exit 1
+fi
+
+echo ""
+echo "=========================================="
+echo "✓ AppImage 打包完成"
+echo "=========================================="
+echo "文件路徑：${APPIMAGE_PATH}"
+echo "文件大小：$(du -h "${APPIMAGE_PATH}" | cut -f1)"
+echo ""
+echo "下一步：運行驗證"
+echo "  APPIMAGE_VERSION=${APPIMAGE_VERSION} bash ${SCRIPT_DIR}/verify-artifact.sh"
+echo "=========================================="

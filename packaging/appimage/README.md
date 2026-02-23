@@ -21,16 +21,38 @@ packaging/appimage/
 │   ├── tty-clock-timer.desktop
 │   └── tty-clock-timer.svg
 └── scripts/
-    ├── build-core.sh
+    ├── build-core.sh              # 編譯 Zig Core 二進檔
+    ├── fetch-gum.sh               # 下載並驗證 gum 工具
+    ├── setup-deps.sh              # 防呆檢查：自動下載依賴
+    ├── package-appimage.sh         # 打包 AppImage（已整合防呆流程）
+    ├── verify-artifact.sh
     ├── mvp-smoke.ts
-    ├── package-appimage.sh
-    ├── timer-smoke.ts
-    └── verify-artifact.sh
+    └── timer-smoke.ts
 ```
 
-## Fixed Build/Package Interface
+## 防呆機制與依賴管理
 
-`package-appimage.sh` 預設採用 repo-local clean rebuild：每次執行都會先清理以下路徑，再重建 core 與 TUI。
+### 自動依賴檢查（setup-deps.sh）
+
+首次運行 `package-appimage.sh` 時，腳本會**自動執行** `setup-deps.sh` 進行依賴檢查與下載：
+
+1. **gum 工具**：檢查 `packaging/tools/gum/linux-x64/gum` 是否存在
+   - 若缺失 → 自動執行 `fetch-gum.sh` 下載 v0.17.0
+   - 若已存在 → 跳過下載，提示已就緒
+
+2. **appimagetool**：檢查以下優先順序
+   - 環境變數 `APPIMAGETOOL_BIN`（使用者明確指定）
+   - 本機路徑 `packaging/tools/appimagetool.AppImage`
+   - 系統路徑（`command -v appimagetool`）
+   - 若都不存在 → 自動下載最新版本（1.9.1）到本機路徑
+
+3. **TUI 依賴**：檢查 `tui/node_modules` 是否存在
+   - 若缺失 → 自動執行 `bun install`（需要 bun 已安裝）
+   - 若已存在 → 跳過安裝，提示已就緒
+
+### 增量構建
+
+`package-appimage.sh` 採用 **repo-local clean rebuild** 策略：每次執行都會先清理以下路徑，再重建 core 與 TUI。
 
 - `packaging/out/appimage/stage`
 - `packaging/out/appimage/AppDir`
@@ -39,6 +61,45 @@ packaging/appimage/
 - `tui/dist`
 
 此策略不會清除全域 cache（例如 Bun 全域快取），但會增加單次打包時間，以換取跨機器與跨分支的一致產物。
+
+### 常見問題與解決方案
+
+#### ❌ appimagetool 下載失敗（404）
+
+**原因**：版本號過時或網路連接失敗
+
+**解決**：
+```bash
+# 方式 1：手動指定最新版本
+export APPIMAGETOOL_BIN=/path/to/your/appimagetool
+APPIMAGE_VERSION=1.0.0 ./packaging/appimage/scripts/package-appimage.sh
+
+# 方式 2：從 GitHub 下載最新版本
+mkdir -p packaging/tools
+wget -O packaging/tools/appimagetool.AppImage \
+  https://github.com/AppImage/appimagetool/releases/download/1.9.1/appimagetool-x86_64.AppImage
+chmod +x packaging/tools/appimagetool.AppImage
+```
+
+#### ❌ bundled gum 找不到
+
+**原因**：首次執行時 gum 工具還未下載
+
+**解決**：`package-appimage.sh` 會自動執行 `setup-deps.sh` 完成下載，無需手動干預。
+或手動執行：
+```bash
+bash packaging/appimage/scripts/fetch-gum.sh
+```
+
+#### ❌ TUI 依賴未安裝
+
+**原因**：新機器上 clone 後，TUI 的 node_modules 未安裝
+
+**解決**：`package-appimage.sh` 會自動執行 `setup-deps.sh` 完成安裝，無需手動干預。
+或手動執行：
+```bash
+cd tui && bun install && cd ..
+```
 
 ## Release Modes
 
