@@ -76,6 +76,16 @@ Pause / Resume / Reset 一鍵操作
   -> If TUI not connected: fallback stdin path supports q to quit.
 ```
 
+## 環境需求
+
+### 執行 AppImage
+- **bun** ([https://bun.sh](https://bun.sh)) — TUI runtime 所需
+- **平台**：Linux x86_64
+
+### 開發環境
+- **zig** nightly (`0.16.0-dev`) — [https://ziglang.org/download](https://ziglang.org/download)
+- **bun** — [https://bun.sh](https://bun.sh)
+
 ## 快速開始
 
 ### Core
