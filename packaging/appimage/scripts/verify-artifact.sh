@@ -47,8 +47,8 @@ check_executable "${APPIMAGE_PATH}" "AppImage file"
 check_exists "${APPDIR}/AppRun" "AppRun"
 check_executable "${APPDIR}/AppRun" "AppRun"
 
-check_exists "${APPDIR}/usr/bin/tty_clock_timer" "core binary"
-check_executable "${APPDIR}/usr/bin/tty_clock_timer" "core binary"
+check_exists "${APPDIR}/usr/bin/tic" "core binary"
+check_executable "${APPDIR}/usr/bin/tic" "core binary"
 
 check_exists "${APPDIR}/usr/lib/tty-clock-timer/tui/index.js" "TUI runtime entry"
 check_exists "${APPDIR}/usr/lib/tty-clock-timer/tui/libopentui.so" "TUI native library"

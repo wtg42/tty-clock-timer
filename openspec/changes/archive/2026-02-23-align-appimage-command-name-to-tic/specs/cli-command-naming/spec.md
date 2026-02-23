@@ -1,8 +1,5 @@
-# cli-command-naming Specification
+## MODIFIED Requirements
 
-## Purpose
-定義系統使用的主要命令名稱，確保所有文檔、打包構件與 CLI 介面保持一致。
-## Requirements
 ### Requirement: 簡潔命令名稱
 系統 MUST 以 `tic` 作為主要命令名稱。所有文檔、打包構件、CLI 幫助文本 MUST 引用 `tic` 而非 `tty-clock-timer` 或 `tty_clock_timer`。AppImage desktop entry 的 `Exec` 欄位 MUST 使用 `tic`。
 
@@ -21,4 +18,3 @@
 #### Scenario: AppImage desktop entry 使用簡潔命令
 - **WHEN** 檢視 `packaging/appimage/assets/tty-clock-timer.desktop`
 - **THEN** `Exec` 欄位 MUST 為 `tic`
-

@@ -123,7 +123,7 @@ cd tui && bun install && cd ..
 ```
 
 - Fixed input: `core/` source tree
-- Fixed output: `packaging/out/appimage/stage/usr/bin/tty_clock_timer`
+- Fixed output: `packaging/out/appimage/stage/usr/bin/tic`
 - 補充：`package-appimage.sh` 會自動執行此步驟；此命令主要用於獨立檢查 core 產物。
 
 ### 2) Package AppImage Artifact

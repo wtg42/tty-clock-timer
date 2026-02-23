@@ -1,7 +1,7 @@
 [Desktop Entry]
 Type=Application
 Name=tty-clock-timer
-Exec=tty_clock_timer
+Exec=tic
 Icon=tty-clock-timer
 Terminal=true
 Categories=Utility;
