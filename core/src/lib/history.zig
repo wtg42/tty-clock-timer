@@ -3,7 +3,7 @@ const std = @import("std");
 const Io = std.Io;
 const Dir = std.Io.Dir;
 
-pub const MAX_HISTORY_ENTRIES: usize = 50;
+pub const MAX_HISTORY_ENTRIES: usize = 10;
 
 pub const Entry = struct {
     duration_seconds: u32,
