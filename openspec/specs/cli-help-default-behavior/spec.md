@@ -7,9 +7,9 @@ TBD - created by archiving change show-help-when-no-args. Update Purpose after a
 系統在未提供任何參數啟動 CLI 時 MUST 顯示完整 help 說明，且該內容 MUST 與 `--help` 旗標輸出一致。
 
 #### Scenario: 無參數直接啟動
-- **WHEN** 使用者執行 `tty_clock_timer` 且未提供任何參數
+- **WHEN** 使用者執行 `tic` 且未提供任何參數
 - **THEN** 系統顯示完整 Usage、Options、Example 區塊
-- **AND** 顯示內容與 `tty_clock_timer --help` 相同
+- **AND** 顯示內容與 `tic --help` 相同
 
 ### Requirement: 無參數情境視為說明流程
 系統在無參數情境 MUST 走說明流程而非錯誤流程，避免輸出「缺少參數」錯誤文案。
@@ -23,14 +23,14 @@ TBD - created by archiving change show-help-when-no-args. Update Purpose after a
 系統對於未知旗標、缺少值或非數字等輸入錯誤 MUST 維持錯誤語意與錯誤訊息，不得因無參數友善化而放寬。
 
 #### Scenario: 提供未知旗標
-- **WHEN** 使用者執行 `tty_clock_timer --unknown`
+- **WHEN** 使用者執行 `tic --unknown`
 - **THEN** 系統回報未知參數錯誤訊息
 
 #### Scenario: 提供秒數旗標但缺值
-- **WHEN** 使用者執行 `tty_clock_timer --seconds`
+- **WHEN** 使用者執行 `tic --seconds`
 - **THEN** 系統回報缺少秒數值錯誤訊息
 
 #### Scenario: 提供非數字值
-- **WHEN** 使用者執行 `tty_clock_timer --minutes abc`
+- **WHEN** 使用者執行 `tic --minutes abc`
 - **THEN** 系統回報無效數字錯誤訊息
 
