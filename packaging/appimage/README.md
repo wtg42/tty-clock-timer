@@ -1,6 +1,6 @@
 # AppImage Packaging Foundation
 
-此目錄提供 Linux x86_64 的 AppImage 打包骨架，支援 `tty-clock-timer` 的 tag-driven 自動發版主流程與 manual release fallback。
+This directory provides the Linux x86_64 AppImage packaging foundation for `tty-clock-timer`, supporting a tag-driven primary release flow with a manual fallback path.
 
 ## Target and Output
 
@@ -21,38 +21,38 @@ packaging/appimage/
 │   ├── tty-clock-timer.desktop
 │   └── tty-clock-timer.svg
 └── scripts/
-    ├── build-core.sh              # 編譯 Zig Core 二進檔
-    ├── fetch-gum.sh               # 下載並驗證 gum 工具
-    ├── setup-deps.sh              # 防呆檢查：自動下載依賴
-    ├── package-appimage.sh         # 打包 AppImage（已整合防呆流程）
+    ├── build-core.sh              # build Zig core binary
+    ├── fetch-gum.sh               # download and verify gum tool
+    ├── setup-deps.sh              # guardrail checks with auto dependency fetch
+    ├── package-appimage.sh        # package AppImage (guardrail flow integrated)
     ├── verify-artifact.sh
     ├── mvp-smoke.ts
     └── timer-smoke.ts
 ```
 
-## 防呆機制與依賴管理
+## Guardrails and Dependency Management
 
-### 自動依賴檢查（setup-deps.sh）
+### Automatic Dependency Checks (`setup-deps.sh`)
 
-首次運行 `package-appimage.sh` 時，腳本會**自動執行** `setup-deps.sh` 進行依賴檢查與下載：
+On first run of `package-appimage.sh`, the script **automatically executes** `setup-deps.sh` to check and fetch dependencies:
 
-1. **gum 工具**：檢查 `packaging/tools/gum/linux-x64/gum` 是否存在
-   - 若缺失 → 自動執行 `fetch-gum.sh` 下載 v0.17.0
-   - 若已存在 → 跳過下載，提示已就緒
+1. **gum tool**: checks whether `packaging/tools/gum/linux-x64/gum` exists
+   - Missing -> automatically runs `fetch-gum.sh` to download v0.17.0
+   - Present -> skips download and reports ready
 
-2. **appimagetool**：檢查以下優先順序
-   - 環境變數 `APPIMAGETOOL_BIN`（使用者明確指定）
-   - 本機路徑 `packaging/tools/appimagetool.AppImage`
-   - 系統路徑（`command -v appimagetool`）
-   - 若都不存在 → 自動下載最新版本（1.9.1）到本機路徑
+2. **appimagetool**: checks in this priority order
+   - Environment variable `APPIMAGETOOL_BIN` (explicit user override)
+   - Local path `packaging/tools/appimagetool.AppImage`
+   - System path (`command -v appimagetool`)
+   - If none are available -> automatically downloads the latest supported version (1.9.1) to the local path
 
-3. **TUI 依賴**：檢查 `tui/node_modules` 是否存在
-   - 若缺失 → 自動執行 `bun install`（需要 bun 已安裝）
-   - 若已存在 → 跳過安裝，提示已就緒
+3. **TUI dependencies**: checks whether `tui/node_modules` exists
+   - Missing -> automatically runs `bun install` (requires `bun` installed)
+   - Present -> skips install and reports ready
 
-### 增量構建
+### Incremental Build Strategy
 
-`package-appimage.sh` 採用 **repo-local clean rebuild** 策略：每次執行都會先清理以下路徑，再重建 core 與 TUI。
+`package-appimage.sh` uses a **repo-local clean rebuild** strategy: each run clears the paths below, then rebuilds core and TUI.
 
 - `packaging/out/appimage/stage`
 - `packaging/out/appimage/AppDir`
@@ -60,43 +60,43 @@ packaging/appimage/
 - `core/.zig-cache`
 - `tui/dist`
 
-此策略不會清除全域 cache（例如 Bun 全域快取），但會增加單次打包時間，以換取跨機器與跨分支的一致產物。
+This strategy does not clear global caches (for example, Bun's global cache). It increases per-run packaging time in exchange for consistent artifacts across machines and branches.
 
-### 常見問題與解決方案
+### Common Issues and Fixes
 
-#### ❌ appimagetool 下載失敗（404）
+#### ❌ appimagetool download fails (404)
 
-**原因**：版本號過時或網路連接失敗
+**Cause**: outdated version URL or network connectivity failure.
 
-**解決**：
+**Fix**:
 ```bash
-# 方式 1：手動指定最新版本
+# Option 1: point to a known-good local binary
 export APPIMAGETOOL_BIN=/path/to/your/appimagetool
 APPIMAGE_VERSION=1.0.0 ./packaging/appimage/scripts/package-appimage.sh
 
-# 方式 2：從 GitHub 下載最新版本
+# Option 2: download latest supported version from GitHub
 mkdir -p packaging/tools
 wget -O packaging/tools/appimagetool.AppImage \
   https://github.com/AppImage/appimagetool/releases/download/1.9.1/appimagetool-x86_64.AppImage
 chmod +x packaging/tools/appimagetool.AppImage
 ```
 
-#### ❌ bundled gum 找不到
+#### ❌ bundled gum not found
 
-**原因**：首次執行時 gum 工具還未下載
+**Cause**: gum has not been downloaded yet on first run.
 
-**解決**：`package-appimage.sh` 會自動執行 `setup-deps.sh` 完成下載，無需手動干預。
-或手動執行：
+**Fix**: `package-appimage.sh` auto-runs `setup-deps.sh`, so no manual action is required.
+Or run manually:
 ```bash
 bash packaging/appimage/scripts/fetch-gum.sh
 ```
 
-#### ❌ TUI 依賴未安裝
+#### ❌ TUI dependencies not installed
 
-**原因**：新機器上 clone 後，TUI 的 node_modules 未安裝
+**Cause**: after cloning on a new machine, TUI `node_modules` is missing.
 
-**解決**：`package-appimage.sh` 會自動執行 `setup-deps.sh` 完成安裝，無需手動干預。
-或手動執行：
+**Fix**: `package-appimage.sh` auto-runs `setup-deps.sh`, so no manual action is required.
+Or run manually:
 ```bash
 cd tui && bun install && cd ..
 ```
@@ -106,6 +106,7 @@ cd tui && bun install && cd ..
 ### Tag-driven (Primary)
 
 - Trigger: push version tag（`v*`）
+ - Trigger: push version tag (`v*`)
 - Workflow: `.github/workflows/tag-driven-appimage-release.yml`
 - Output assets:
   - `tty-clock-timer-<version>-linux-x86_64.AppImage`
@@ -114,7 +115,7 @@ cd tui && bun install && cd ..
 
 ### Manual (Fallback)
 
-當 CI/環境異常導致 tag-driven 流程不可用時，維護者可使用下列固定介面手動完成同版本交付。
+When CI or environment issues make the tag-driven flow unavailable, maintainers can deliver the same version manually via the fixed interfaces below.
 
 ### 1) Build Core Artifact
 
@@ -124,7 +125,7 @@ cd tui && bun install && cd ..
 
 - Fixed input: `core/` source tree
 - Fixed output: `packaging/out/appimage/stage/usr/bin/tic`
-- 補充：`package-appimage.sh` 會自動執行此步驟；此命令主要用於獨立檢查 core 產物。
+- Note: `package-appimage.sh` runs this step automatically; this command is mainly for isolated core artifact checks.
 
 ### 2) Package AppImage Artifact
 
@@ -133,7 +134,7 @@ APPIMAGE_VERSION=<version> ./packaging/appimage/scripts/package-appimage.sh
 ```
 
 - Fixed input:
-  - `core/` source tree（由腳本內部強制 clean rebuild）
+  - `core/` source tree (clean rebuild is enforced by the script)
   - `tui/` runtime tree
   - `packaging/appimage/assets/*`
 - Fixed output: `packaging/out/appimage/tty-clock-timer-<version>-linux-x86_64.AppImage`
@@ -144,7 +145,7 @@ APPIMAGE_VERSION=<version> ./packaging/appimage/scripts/package-appimage.sh
 APPIMAGE_VERSION=<version> ./packaging/appimage/scripts/verify-artifact.sh
 ```
 
-- 檢查項目對齊 `checklist.md`：可執行、命名、必要資產存在。
+- Checks aligned with `checklist.md`: executable bit, naming, and required assets.
 
 ### 4) MVP Runtime Smoke (Optional)
 

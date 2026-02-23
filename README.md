@@ -1,29 +1,31 @@
 # tty-clock-timer
 
-![計時中](./assets/screenshots/timer-running.png)
+![Timer running](./assets/screenshots/timer-running.png)
 
 Simple. Fast. Offline.
 
-秒開即用
+Launches instantly.
 
-分鐘 / 秒精準控制
+Precise minute/second control.
 
-Pause / Resume / Reset 一鍵操作
+One-key Pause / Resume / Reset.
 
-使用紀錄自動保存
+Usage history is saved automatically.
 
-無網路、無追蹤、無負擔
+No network. No tracking. No overhead.
 
-專注於終端，專注於當下。
+Stay in the terminal. Stay in the moment.
 
-## 架構總覽
+Built with AI-assisted coding tools.
 
-- `core/`（Zig）：CLI 參數解析、timer 狀態機、IPC server、UI 子程序啟動。
-- `tui/`（TypeScript + OpenTUI/Solid）：畫面渲染、鍵盤操作、command plane、socket client。
-- `openspec/`：需求、設計、任務與變更歷程。
-- Core runtime 資源由 `main(init: std.process.Init)` 提供：allocator 使用 `init.gpa`、I/O 使用 `init.io`。
+## Architecture Overview
 
-## 系統流程（ASCII）
+- `core/` (Zig): CLI argument parsing, timer state machine, IPC server, and UI subprocess bootstrap.
+- `tui/` (TypeScript + OpenTUI/Solid): rendering, keyboard handling, command plane, and socket client.
+- `openspec/`: requirements, design docs, tasks, and change history.
+- Core runtime resources come from `main(init: std.process.Init)`: allocator uses `init.gpa`, and I/O uses `init.io`.
+
+## System Flow (ASCII)
 
 ```text
 ┌────────────────────────────────────────────────────────────────────┐
@@ -37,7 +39,7 @@ Pause / Resume / Reset 一鍵操作
 │ 1) parse args                                                      │
 │ 2) init countdown timer                                            │
 │ 3) setup unique Unix socket server (/tmp/tty-clock-timer-*.sock)   │
-│ 4) spawn TUI process (bun run <entry> -- --socket-path <unique>)    │
+│ 4) spawn TUI process (bun run <entry> -- --socket-path <unique>)   │
 └────────────────────────────────────────────────────────────────────┘
                      │                               │
                      │ timer events                  │ commands
@@ -63,7 +65,7 @@ Pause / Resume / Reset 一鍵操作
 └────────────────────────────────────────────────────────────────────┘
 ```
 
-## 主要互動邏輯
+## Main Interaction Logic
 
 ```text
 [No args or --help]
@@ -76,17 +78,17 @@ Pause / Resume / Reset 一鍵操作
   -> If TUI not connected: fallback stdin path supports q to quit.
 ```
 
-## 環境需求
+## Requirements
 
-### 執行 AppImage
-- **bun** ([https://bun.sh](https://bun.sh)) — TUI runtime 所需
-- **平台**：Linux x86_64
+### Running the AppImage
+- **bun** ([https://bun.sh](https://bun.sh)) - required for the TUI runtime
+- **Platform**: Linux x86_64
 
-### 開發環境
-- **zig** nightly (`0.16.0-dev`) — [https://ziglang.org/download](https://ziglang.org/download)
-- **bun** — [https://bun.sh](https://bun.sh)
+### Development Environment
+- **zig** nightly (`0.16.0-dev`) - [https://ziglang.org/download](https://ziglang.org/download)
+- **bun** - [https://bun.sh](https://bun.sh)
 
-## 快速開始
+## Quick Start
 
 ### Core
 
@@ -97,7 +99,7 @@ zig build run -- --seconds 90
 zig build test
 ```
 
-### TUI（單獨開發）
+### TUI (Standalone Development)
 
 ```bash
 cd tui
@@ -105,34 +107,42 @@ bun install
 bun run dev
 ```
 
-## AppImage 發佈與分發
+## AppImage Release and Distribution
 
-`tty-clock-timer` 支援 Linux x86_64 AppImage 發行版本，提供獨立的、可攜帶的執行檔供最終使用者下載執行。
+`tty-clock-timer` ships Linux x86_64 AppImage releases, providing a standalone and portable binary for end users.
 
-### 運行環境契約（Runtime Artifact Contract）
+After downloading the AppImage, make it executable with `chmod +x` and optionally rename it to `tic` so command examples and help output stay consistent:
 
-AppImage 與開發模式共用統一的 **Core-TUI artifact contract**，定義：
+```bash
+chmod +x tty-clock-timer-<version>-linux-x86_64.AppImage
+mv tty-clock-timer-<version>-linux-x86_64.AppImage tic
+./tic --help
+```
 
-- **Core binary**: `usr/bin/tic`（AppImage 內唯一入口）
-- **TUI runtime root**: `usr/lib/tty-clock-timer/tui`（由 core 以此作為工作目錄啟動）
-- **TUI entry file**: `index.js`（可透過環境變數 `TTY_CLOCK_TUI_ENTRY` 覆蓋）
-- **AppRun wrapper**: 設置環境變數後轉呼叫 core，不直接啟動 UI
+### Runtime Artifact Contract
 
-詳細契約規範見 [packaging/appimage/artifact-contract.md](./packaging/appimage/artifact-contract.md)。
+AppImage and development mode share a unified **Core-TUI artifact contract**:
 
-### Unix Socket IPC 與動態 Socket Path
+- **Core binary**: `usr/bin/tic` (the only entrypoint inside the AppImage)
+- **TUI runtime root**: `usr/lib/tty-clock-timer/tui` (used by core as the subprocess working directory)
+- **TUI entry file**: `index.js` (overridable via `TTY_CLOCK_TUI_ENTRY`)
+- **AppRun wrapper**: sets env vars, then delegates to core instead of launching the UI directly
 
-Core 與 TUI 透過 Unix Domain Socket 進行雙向通訊。為支援多實例運行（避免衝突），**Core 每次執行時動態產生唯一的 socket path**（格式：`/tmp/tty-clock-timer-{random_hex}.sock`），並將其注入 TUI 子進程的命令行參數。
+For full contract details, see [packaging/appimage/artifact-contract.md](./packaging/appimage/artifact-contract.md).
 
-詳細機制見 [openspec/specs/unix-socket-ipc-bridge/spec.md](./openspec/specs/unix-socket-ipc-bridge/spec.md)。
+### Unix Socket IPC and Dynamic Socket Path
 
-### AppImage 構建與驗證
+Core and TUI communicate bidirectionally over Unix Domain Sockets. To support multiple concurrent instances without collisions, **core generates a unique socket path on every run** (`/tmp/tty-clock-timer-{random_hex}.sock`) and passes it into the TUI subprocess via CLI arguments.
 
-AppImage 打包流程包含固定的輸入與輸出介面：
+For detailed behavior, see [openspec/specs/unix-socket-ipc-bridge/spec.md](./openspec/specs/unix-socket-ipc-bridge/spec.md).
 
-1. **構建 Core 二進檔**：`./packaging/appimage/scripts/build-core.sh`
-2. **打包 AppImage**：`APPIMAGE_VERSION=<version> ./packaging/appimage/scripts/package-appimage.sh`
-3. **驗證 AppImage**：`APPIMAGE_VERSION=<version> ./packaging/appimage/scripts/verify-artifact.sh`
-4. **MVP 煙霧測試**（可選）：使用 `mvp-smoke.ts` 或 `timer-smoke.ts` 驗證功能
+### AppImage Build and Verification
 
-詳細步驟與 release playbook 見 [packaging/appimage/](./packaging/appimage/) 目錄。
+The AppImage packaging workflow has fixed input/output interfaces:
+
+1. **Build core binary**: `./packaging/appimage/scripts/build-core.sh`
+2. **Package AppImage**: `APPIMAGE_VERSION=<version> ./packaging/appimage/scripts/package-appimage.sh`
+3. **Verify AppImage**: `APPIMAGE_VERSION=<version> ./packaging/appimage/scripts/verify-artifact.sh`
+4. **MVP smoke tests** (optional): validate behavior with `mvp-smoke.ts` or `timer-smoke.ts`
+
+For full steps and release playbook details, see the [packaging/appimage/](./packaging/appimage/) directory.

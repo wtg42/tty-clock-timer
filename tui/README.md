@@ -1,8 +1,8 @@
 # tty-clock-timer TUI
 
-`tui/` 是 OpenTUI（Solid）前端，負責顯示倒數狀態、接收鍵盤操作，並經由 Unix Socket 與 Zig Core 通訊。
+`tui/` is the OpenTUI (Solid) frontend. It renders countdown state, handles keyboard input, and communicates with the Zig core over Unix sockets.
 
-## 開發指令
+## Development Commands
 
 ```bash
 bun install
@@ -10,11 +10,11 @@ bun run dev
 bun test
 ```
 
-- `bun run dev`：以 watch 模式執行 `src/index.tsx`。
-- `bun test`：執行 `src/**/*.test.ts` 的單元測試。
-- 目前 `tui/` 尚未提供獨立 lint/type-check script（`tsconfig.json` 設為 `noEmit`）。
+- `bun run dev`: runs `src/index.tsx` in watch mode.
+- `bun test`: runs unit tests under `src/**/*.test.ts`.
+- `tui/` currently has no standalone lint/type-check script (`tsconfig.json` is set to `noEmit`).
 
-## TUI 端到端資料流（聚焦 `src/` 檔案職責）
+## End-to-End TUI Data Flow (`src/` Responsibilities)
 
 ```text
 Keyboard (p/r/s/q)
@@ -62,38 +62,38 @@ Keyboard (p/r/s/q)
                               +-------------------+
 ```
 
-## 模組職責（`src/`）
+## Module Responsibilities (`src/`)
 
-- `src/index.tsx`：TUI composition root。組裝 adapter/store/command plane、處理 keyboard 與連線生命週期，最後 render。
-- `src/ui_logic.ts`：純函式決策層（時間格式化、按鍵轉命令、狀態檢查、短時間 dedup）。
-- `src/command_plane.ts`：in-process command boundary。統一 `POST /commands/:command` 進入點與 `CommandResponse` 正規化。
-- `src/unix_socket_adapter.ts`：transport layer。處理 Unix socket 連線、line-delimited JSON framing、command request/response 對應。
-- `src/protocol.ts`：資料契約邊界。定義 command/event type，並提供 runtime guards（`isCoreEvent`、`isCommandResultMessage`）。
-- `src/store.ts`：事件投影層。將 `CoreEvent` 投影為 `TimerViewState`，以 subscribe API 驅動畫面更新。
+- `src/index.tsx`: TUI composition root. Wires adapter/store/command plane, manages keyboard + connection lifecycle, then renders.
+- `src/ui_logic.ts`: pure decision layer (time formatting, key-to-command mapping, status checks, short-window dedup).
+- `src/command_plane.ts`: in-process command boundary. Normalizes the `POST /commands/:command` entrypoint and `CommandResponse`.
+- `src/unix_socket_adapter.ts`: transport layer. Handles Unix socket connection, line-delimited JSON framing, and command request/response correlation.
+- `src/protocol.ts`: protocol contract boundary. Defines command/event types and runtime guards (`isCoreEvent`, `isCommandResultMessage`).
+- `src/store.ts`: event projection layer. Projects `CoreEvent` into `TimerViewState` and drives UI updates through a subscribe API.
 
-## 資料契約（Protocol）
+## Protocol Contract
 
-- TUI 與 Core 的資料交換以 JSON message 為基礎。
-- inbound event：`update_timer`、`timer_finished`、`exit`。
-- outbound command：`pause`、`resume`、`reset`、`quit`。
-- `src/protocol.ts` 是唯一型別與 runtime 驗證入口，避免未驗證 payload 直接影響 UI 狀態。
+- TUI and core exchange JSON messages.
+- Inbound events: `update_timer`, `timer_finished`, `exit`.
+- Outbound commands: `pause`, `resume`, `reset`, `quit`.
+- `src/protocol.ts` is the only type + runtime validation entrypoint, preventing unvalidated payloads from directly mutating UI state.
 
-## 目前行為
+## Current Behavior
 
-- 支援按鍵：`p`（pause）、`r`（resume）、`s`（reset）、`q`（quit）。
-- 命令路徑：`index.tsx` -> `command_plane.ts` -> `unix_socket_adapter.ts` -> Core。
-- 事件回流：Core -> `unix_socket_adapter.ts` -> `protocol.ts` guard -> `store.ts` -> `index.tsx` render。
-- Socket path 由 Core 每次執行時動態產生唯一值（避免多實例衝突），可用 `--socket-path <path>` 指定自訂路徑。
+- Supported keys: `p` (pause), `r` (resume), `s` (reset), `q` (quit).
+- Command path: `index.tsx` -> `command_plane.ts` -> `unix_socket_adapter.ts` -> core.
+- Event path: core -> `unix_socket_adapter.ts` -> `protocol.ts` guard -> `store.ts` -> `index.tsx` render.
+- Socket path is generated uniquely by core on every run (to avoid multi-instance collisions), with optional override via `--socket-path <path>`.
 
-## Unit test 範圍（目前）
+## Unit Test Scope (Current)
 
-- 僅包含 function-level unit tests。
-- 測試檔案與目標函式同目錄，採 `*.test.ts` 命名（例如 `store.test.ts`）。
-- 測試案例命名採「`函式/情境`」風格，方便定位失敗案例。
-- 目前**不包含** feature tests（跨模組流程、整體 UI 互動、E2E）。
+- Only function-level unit tests are included.
+- Test files live alongside target functions and use `*.test.ts` naming (for example, `store.test.ts`).
+- Test case names follow a `function/scenario` style for faster failure triage.
+- Feature tests are **not currently included** (cross-module flows, full UI interaction, E2E).
 
-### 測試對映
+### Test Coverage Map
 
-- `ui_logic.ts`: `formatRemaining`、`commandFromKey`、`shouldSkipByStatus`、`shouldSkipByDedup`
+- `ui_logic.ts`: `formatRemaining`, `commandFromKey`, `shouldSkipByStatus`, `shouldSkipByDedup`
 - `protocol.ts`: `isCoreEvent`、`isCommandResultMessage`
-- `store.ts`: `createTimerStore` 的 event projection 行為
+- `store.ts`: event projection behavior of `createTimerStore`

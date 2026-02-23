@@ -1,36 +1,36 @@
 # Packaging
 
-此目錄包含 `tty-clock-timer` 的打包與發行相關檔案。目前支援 **AppImage** (Linux x86_64) 格式。
+This directory contains packaging and release assets for `tty-clock-timer`. The current distribution target is **AppImage** (Linux x86_64).
 
-## 目錄結構
+## Directory Layout
 
 ```text
 packaging/
-├── README.md            ← 本文件
-├── appimage/            ← AppImage 打包骨架、腳本、資產
-│   ├── README.md        ← AppImage 詳細文件
+├── README.md            <- this document
+├── appimage/            <- AppImage scaffold, scripts, and assets
+│   ├── README.md        <- AppImage detailed docs
 │   ├── artifact-contract.md
 │   ├── checklist.md
 │   ├── release.md
 │   ├── verification.md
-│   ├── assets/          ← .desktop、icon
-│   └── scripts/         ← build / package / verify 腳本
-├── tools/               ← 外部工具（如 appimagetool）
-└── out/                 ← 建置產出（git-ignored）
-    └── appimage/        ← AppImage 與中間產物
+│   ├── assets/          <- .desktop and icon files
+│   └── scripts/         <- build / package / verify scripts
+├── tools/               <- external tools (for example, appimagetool)
+└── out/                 <- build outputs (git-ignored)
+    └── appimage/        <- AppImage and intermediate artifacts
 ```
 
-## 環境需求
+## Environment Requirements
 
-| 工具 | 版本 | 說明 |
+| Tool | Version | Description |
 |------|------|------|
-| `zig` | 0.16+ | 編譯 core binary |
-| `bun` | 1.x | TUI runtime（host 需要安裝） |
-| `appimagetool` | — | 打包 AppDir 為 `.AppImage`；放在 `packaging/tools/appimagetool.AppImage` 或設定 `APPIMAGETOOL_BIN` 環境變數 |
+| `zig` | 0.16+ | Builds the core binary |
+| `bun` | 1.x | TUI runtime (must be installed on host) |
+| `appimagetool` | - | Packages AppDir into `.AppImage`; place at `packaging/tools/appimagetool.AppImage` or set `APPIMAGETOOL_BIN` |
 
-`appimagetool` 可從 [GitHub Releases](https://github.com/AppImage/appimagetool/releases) 下載。
+You can download `appimagetool` from [GitHub Releases](https://github.com/AppImage/appimagetool/releases).
 
-## 快速開始
+## Quick Start
 
 ```bash
 # 1. Build core binary
@@ -43,43 +43,43 @@ APPIMAGE_VERSION=0.1.0 ./packaging/appimage/scripts/package-appimage.sh
 APPIMAGE_VERSION=0.1.0 ./packaging/appimage/scripts/verify-artifact.sh
 ```
 
-產出路徑：`packaging/out/appimage/tty-clock-timer-<version>-linux-x86_64.AppImage`
+Output path: `packaging/out/appimage/tty-clock-timer-<version>-linux-x86_64.AppImage`
 
 ## FAQ
 
-### appimagetool 找不到怎麼辦？
+### What if `appimagetool` cannot be found?
 
-腳本依序嘗試：
-1. `APPIMAGETOOL_BIN` 環境變數指定的路徑
+Scripts resolve `appimagetool` in this order:
+1. Path specified by the `APPIMAGETOOL_BIN` environment variable
 2. `packaging/tools/appimagetool.AppImage`
-3. 系統 `PATH` 中的 `appimagetool`
+3. `appimagetool` found in system `PATH`
 
-建議將下載的 binary 放到 `packaging/tools/appimagetool.AppImage` 並設為可執行。
+Recommended: put the downloaded binary at `packaging/tools/appimagetool.AppImage` and mark it executable.
 
-### AppImage 為什麼還需要 host 的 bun？
+### Why does AppImage still require host `bun`?
 
-目前 TUI runtime 以原始碼形式打包（`tui/`），尚未內嵌 bun binary。AppImage 的 `AppRun` 會呼叫 host 的 `bun` 來執行 TUI。這是已知限制，未來可能改為 bundled runtime。
+The TUI runtime is currently packaged as source (`tui/`) and does not embed the `bun` binary yet. AppImage `AppRun` calls host `bun` to execute the TUI. This is a known limitation and may be replaced by a bundled runtime later.
 
-### `APPIMAGE_VERSION` 怎麼用？
+### How is `APPIMAGE_VERSION` used?
 
-此環境變數控制產出的檔名與版本標記。未設定時預設為 `dev`：
+This environment variable controls output naming and version tags. If unset, it defaults to `dev`:
 
 ```bash
-# 產出：tty-clock-timer-dev-linux-x86_64.AppImage
+# Output: tty-clock-timer-dev-linux-x86_64.AppImage
 ./packaging/appimage/scripts/package-appimage.sh
 
-# 產出：tty-clock-timer-1.0.0-linux-x86_64.AppImage
+# Output: tty-clock-timer-1.0.0-linux-x86_64.AppImage
 APPIMAGE_VERSION=1.0.0 ./packaging/appimage/scripts/package-appimage.sh
 ```
 
-### `out/` 目錄可以清掉嗎？
+### Can I delete the `out/` directory?
 
-可以。`packaging/out/` 是建置產物目錄，可安全刪除並重新建置。
+Yes. `packaging/out/` contains build artifacts and can be safely removed and rebuilt.
 
-## 詳細文件
+## Detailed Docs
 
-- [AppImage 打包說明](appimage/README.md)
+- [AppImage packaging guide](appimage/README.md)
 - [Release Playbook](appimage/release.md)
 - [Artifact Contract](appimage/artifact-contract.md)
-- [打包檢查清單](appimage/checklist.md)
-- [驗證紀錄](appimage/verification.md)
+- [Packaging checklist](appimage/checklist.md)
+- [Verification record](appimage/verification.md)

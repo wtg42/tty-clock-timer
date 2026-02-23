@@ -1,25 +1,25 @@
 # tty-clock-timer Core
 
-`core/` 是 Zig CLI 核心，負責解析參數、管理倒數計時狀態、啟動 UI 子程序（可用時），並透過 Unix Domain Socket 與 TUI 交換 command/event。
+`core/` is the Zig CLI runtime. It parses arguments, manages countdown timer state, launches the UI subprocess (when available), and exchanges commands/events with the TUI over Unix Domain Sockets.
 
-## 目前功能
+## Current Features
 
-- CLI 支援 `--minutes` / `--seconds` / `--help`。
-- 無參數啟動時會顯示完整 help（與 `--help` 一致）。
-- Runtime allocator 與 I/O 目前使用 `main(init: std.process.Init)` 提供的 `init.gpa` 與 `init.io`。
-- 若可啟動 UI，會為每次執行產生唯一 socket：`/tmp/tty-clock-timer-*.sock`。
-- UI runtime path 依 contract 解析：`TTY_CLOCK_TUI_CWD` → `APPDIR` → local fallback。
-- 若沒有 UI 連線，仍可在 CLI 路徑透過 stdin `q` 結束。
-- Timer 事件會輸出 `update_timer`、`timer_finished`、`exit`。
+- CLI supports `--minutes` / `--seconds` / `--help`.
+- Launching with no args shows full help (same behavior as `--help`).
+- Runtime allocator and I/O currently come from `main(init: std.process.Init)` via `init.gpa` and `init.io`.
+- When UI startup is available, each run uses a unique socket: `/tmp/tty-clock-timer-*.sock`.
+- UI runtime path resolution follows the contract: `TTY_CLOCK_TUI_CWD` -> `APPDIR` -> local fallback.
+- If no UI connects, CLI fallback still supports quitting with stdin `q`.
+- Timer events emitted: `update_timer`, `timer_finished`, `exit`.
 
-## 目錄說明
+## Directory Guide
 
-- `src/main.zig`：CLI entry point，整合參數解析、timer loop、UI process、IPC 與 I/O。
-- `src/lib/config.zig`：CLI 參數解析與錯誤語意。
-- `src/lib/timer.zig`：倒數計時與狀態機。
-- `src/lib/ipc.zig`：command/event message、序列化、解析與 helper。
+- `src/main.zig`: CLI entry point. Integrates argument parsing, timer loop, UI process lifecycle, IPC, and I/O.
+- `src/lib/config.zig`: CLI argument parsing and parse error semantics.
+- `src/lib/timer.zig`: countdown timer logic and state machine.
+- `src/lib/ipc.zig`: command/event messages, serialization, parsing, and helpers.
 
-## 常用指令
+## Common Commands
 
 ```bash
 zig build
