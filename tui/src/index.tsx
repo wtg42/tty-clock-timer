@@ -121,7 +121,7 @@ const FinishedView = () => {
       justifyContent="center"
     >
       <ascii_font ref={titleRef} font="tiny" text="TIME'S UP!" />
-      <text attributes={TextAttributes.BOLD}>Press q to exit</text>
+      <text attributes={TextAttributes.BOLD}>Press s to restart or q to exit</text>
     </box>
   );
 };

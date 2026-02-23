@@ -44,6 +44,7 @@ export const commandFromKey = (key: string): CommandName | null => {
 export const shouldSkipByStatus = (status: string, command: CommandName): boolean => {
   if (command === "pause") return status !== "running";
   if (command === "resume") return status !== "paused";
+  if (command === "reset") return false; // reset always allowed
   return false;
 };
 
