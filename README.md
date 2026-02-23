@@ -2,9 +2,19 @@
 
 ![計時中](./assets/screenshots/timer-running.png)
 
-簡潔清晰的終端介面。
+Simple. Fast. Offline.
 
-`tty-clock-timer` 是一個以 Zig 為核心、OpenTUI 為介面的終端倒數計時器。專案目前採用「Core 管理狀態 + TUI 呈現與互動」的分層架構，兩者透過 Unix Domain Socket 溝通。
+秒開即用
+
+分鐘 / 秒精準控制
+
+Pause / Resume / Reset 一鍵操作
+
+使用紀錄自動保存
+
+無網路、無追蹤、無負擔
+
+專注於終端，專注於當下。
 
 ## 架構總覽
 
