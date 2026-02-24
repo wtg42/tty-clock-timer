@@ -2,6 +2,8 @@
 
 ![Timer running](./assets/screenshots/timer-running.png)
 
+**A TUI timer built with OpenTUI and Zig.**
+
 Simple. Fast. Offline.
 
 Launches instantly.
