@@ -88,22 +88,45 @@ fn currentRealEpochSeconds(io: Io) u64 {
     return if (now_seconds < 0) 0 else @intCast(now_seconds);
 }
 
+/// Freezes ETA for a new timer cycle. Called on start/resume/reset.
+fn freezeEtaForNewCycle(
+    remaining_seconds: u32,
+    now_epoch_seconds: u64,
+    eta_projection: *EtaProjection,
+) void {
+    const base_seconds = now_epoch_seconds;
+    const computed = std.math.add(u64, base_seconds, remaining_seconds) catch std.math.maxInt(u64);
+    eta_projection.frozen_epoch_seconds = computed;
+}
+
 fn resolveEtaEpochSeconds(
     state: timer_mod.TimerState,
     remaining_seconds: u32,
     now_epoch_seconds: u64,
     eta_projection: *EtaProjection,
 ) u64 {
-    const base_seconds = now_epoch_seconds;
-    const computed = std.math.add(u64, base_seconds, remaining_seconds) catch std.math.maxInt(u64);
+    // When running, return frozen ETA without recalculation
+    if (state == .running) {
+        return eta_projection.frozen_epoch_seconds orelse {
+            // Fallback: compute if no frozen value exists (should not happen in normal flow)
+            const base_seconds = now_epoch_seconds;
+            const computed = std.math.add(u64, base_seconds, remaining_seconds) catch std.math.maxInt(u64);
+            return computed;
+        };
+    }
 
+    // When paused, maintain frozen ETA
     if (state == .paused) {
         if (eta_projection.frozen_epoch_seconds) |frozen| return frozen;
-        eta_projection.frozen_epoch_seconds = computed;
+        // Fallback: compute if no frozen value exists (should not happen in normal flow)
+        const base_seconds = now_epoch_seconds;
+        const computed = std.math.add(u64, base_seconds, remaining_seconds) catch std.math.maxInt(u64);
         return computed;
     }
 
-    eta_projection.frozen_epoch_seconds = computed;
+    // For other states (idle, finished), compute fresh ETA
+    const base_seconds = now_epoch_seconds;
+    const computed = std.math.add(u64, base_seconds, remaining_seconds) catch std.math.maxInt(u64);
     return computed;
 }
 
@@ -776,12 +799,18 @@ fn applyCommand(
                 error_message = "invalid_state";
             } else {
                 try timer.unpause(io);
+                // Freeze ETA for the resumed cycle
+                const remaining_seconds = @as(u32, @intCast(timer.remaining_ns / std.time.ns_per_s));
+                freezeEtaForNewCycle(remaining_seconds, currentRealEpochSeconds(io), eta_projection);
             }
         },
         .reset => {
             timer.reset();
             try timer.start(io);
             timer_finished_notified.* = false;
+            // Freeze ETA for the new cycle
+            const remaining_seconds = @as(u32, @intCast(timer.remaining_ns / std.time.ns_per_s));
+            freezeEtaForNewCycle(remaining_seconds, currentRealEpochSeconds(io), eta_projection);
         },
         .quit => {
             should_exit = true;
@@ -1398,6 +1427,12 @@ pub fn main(init: std.process.Init) !void {
     var timer_finished_notified = false;
     var eta_projection = EtaProjection{};
 
+    // Freeze initial ETA for the started cycle
+    {
+        const remaining_seconds = @as(u32, @intCast(countdown_timer.remaining_ns / std.time.ns_per_s));
+        freezeEtaForNewCycle(remaining_seconds, currentRealEpochSeconds(io), &eta_projection);
+    }
+
     if (socket_server) |*server| {
         // Step 9: Block until TUI connects, then send initial timer projection.
         var accepted = server.accept(io) catch |err| {
@@ -1486,9 +1521,24 @@ test "helpMessage - stable output" {
     );
 }
 
+test "main/resolveEtaEpochSeconds - running freezes eta" {
+    var eta_projection = EtaProjection{};
+
+    // Freeze ETA for the running cycle
+    freezeEtaForNewCycle(120, 1_000, &eta_projection);
+    const running_eta = resolveEtaEpochSeconds(.running, 120, 1_000, &eta_projection);
+    try std.testing.expectEqual(@as(u64, 1_120), running_eta);
+
+    // Even with different time, running state returns frozen ETA
+    const frozen_eta = resolveEtaEpochSeconds(.running, 120, 1_500, &eta_projection);
+    try std.testing.expectEqual(@as(u64, 1_120), frozen_eta);
+}
+
 test "main/resolveEtaEpochSeconds - paused freezes eta" {
     var eta_projection = EtaProjection{};
 
+    // Freeze ETA for running cycle, then pause
+    freezeEtaForNewCycle(120, 1_000, &eta_projection);
     const running_eta = resolveEtaEpochSeconds(.running, 120, 1_000, &eta_projection);
     try std.testing.expectEqual(@as(u64, 1_120), running_eta);
 
@@ -1499,11 +1549,43 @@ test "main/resolveEtaEpochSeconds - paused freezes eta" {
 test "main/resolveEtaEpochSeconds - resume recalculates eta" {
     var eta_projection = EtaProjection{};
 
+    // Initial running cycle
+    freezeEtaForNewCycle(120, 1_000, &eta_projection);
     _ = resolveEtaEpochSeconds(.running, 120, 1_000, &eta_projection);
+
+    // Pause (maintains frozen ETA)
     _ = resolveEtaEpochSeconds(.paused, 120, 2_000, &eta_projection);
 
+    // Freeze new ETA for resumed cycle
+    freezeEtaForNewCycle(120, 2_100, &eta_projection);
     const resumed_eta = resolveEtaEpochSeconds(.running, 120, 2_100, &eta_projection);
     try std.testing.expectEqual(@as(u64, 2_220), resumed_eta);
+}
+
+test "main/resolveEtaEpochSeconds - minute boundary no drift" {
+    var eta_projection = EtaProjection{};
+
+    // Simulate scenario: current time is 10:59:50 (epoch 39590)
+    // remaining is 20 seconds, so ETA should be 11:00:10 (epoch 39610)
+    const base_time: u64 = 39590;
+    const remaining: u32 = 20;
+
+    freezeEtaForNewCycle(remaining, base_time, &eta_projection);
+    const eta1 = resolveEtaEpochSeconds(.running, remaining, base_time, &eta_projection);
+    try std.testing.expectEqual(@as(u64, 39610), eta1);
+
+    // Simulate multiple reads during the same minute (even if real time advances)
+    // ETA should remain frozen, no minute drift
+    const eta2 = resolveEtaEpochSeconds(.running, remaining, base_time + 5, &eta_projection);
+    try std.testing.expectEqual(@as(u64, 39610), eta2);
+
+    const eta3 = resolveEtaEpochSeconds(.running, remaining, base_time + 10, &eta_projection);
+    try std.testing.expectEqual(@as(u64, 39610), eta3);
+
+    // When resume happens at later time, recalculate with new base
+    freezeEtaForNewCycle(20, base_time + 10, &eta_projection);
+    const resumed_eta = resolveEtaEpochSeconds(.running, 20, base_time + 10, &eta_projection);
+    try std.testing.expectEqual(@as(u64, base_time + 30), resumed_eta);
 }
 
 test "main/gumBinaryFromEnv - uses override and ignores empty" {
