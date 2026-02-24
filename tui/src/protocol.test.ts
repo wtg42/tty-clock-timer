@@ -13,6 +13,7 @@ describe("protocol/isCoreEvent", () => {
         remaining_seconds: 30,
         total_duration: 60,
         status: "running",
+        eta_hhmm: "14:35",
       }),
     ).toBe(true);
   });
@@ -23,6 +24,7 @@ describe("protocol/isCoreEvent", () => {
         type: "update_timer",
         remaining_seconds: 30,
         total_duration: 60,
+        status: "running",
       }),
     ).toBe(false);
   });

@@ -55,11 +55,12 @@ pub const Command = enum {
 /// All messages are serialized to JSON with a "type" field matching the active union tag.
 pub const Message = union(MessageType) {
     /// Timer state update sent periodically (~1 second intervals).
-    /// Fields: current remaining time, initial duration, and status (idle/running/paused/finished).
+    /// Fields: current remaining time, initial duration, status, and ETA (`HH:MM`).
     update_timer: struct {
         remaining_seconds: u32,
         total_duration: u32,
         status: []const u8,
+        eta_hhmm: []const u8,
     },
     /// Timer countdown completed successfully.
     timer_finished: struct {
@@ -100,6 +101,8 @@ pub const Message = union(MessageType) {
                 try jws.write(payload.total_duration);
                 try jws.objectField("status");
                 try jws.write(payload.status);
+                try jws.objectField("eta_hhmm");
+                try jws.write(payload.eta_hhmm);
             },
             .timer_finished => |payload| {
                 try jws.objectField("total_duration");
@@ -147,7 +150,10 @@ pub const ParseError = error{
 /// Messages created directly (e.g., in sendMessage) are not heap-allocated.
 pub fn freeMessage(allocator: std.mem.Allocator, message: Message) void {
     switch (message) {
-        .update_timer => |payload| allocator.free(payload.status),
+        .update_timer => |payload| {
+            allocator.free(payload.status);
+            allocator.free(payload.eta_hhmm);
+        },
         .keyboard_input => |payload| allocator.free(payload.key),
         .command => |payload| {
             allocator.free(payload.id);
@@ -186,6 +192,7 @@ pub fn parseMessage(allocator: std.mem.Allocator, json: []const u8) !Message {
         const remaining_value = obj.get("remaining_seconds") orelse return error.MissingField;
         const total_value = obj.get("total_duration") orelse return error.MissingField;
         const status_value = obj.get("status") orelse return error.MissingField;
+        const eta_value = obj.get("eta_hhmm") orelse return error.MissingField;
 
         // Type-coerce to integers
         const remaining_int = switch (remaining_value) {
@@ -200,6 +207,10 @@ pub fn parseMessage(allocator: std.mem.Allocator, json: []const u8) !Message {
             .string => |value| value,
             else => return error.InvalidFieldType,
         };
+        const eta_str = switch (eta_value) {
+            .string => |value| value,
+            else => return error.InvalidFieldType,
+        };
 
         // Validate integers fit in u32 range
         if (remaining_int < 0 or remaining_int > std.math.maxInt(u32)) return error.InvalidFieldType;
@@ -209,6 +220,7 @@ pub fn parseMessage(allocator: std.mem.Allocator, json: []const u8) !Message {
             .remaining_seconds = @intCast(remaining_int),
             .total_duration = @intCast(total_int),
             .status = try allocator.dupe(u8, status_str),
+            .eta_hhmm = try allocator.dupe(u8, eta_str),
         } };
     }
 
@@ -302,11 +314,13 @@ pub fn updateTimer(
     remaining_seconds: u32,
     total_duration: u32,
     status: []const u8,
+    eta_hhmm: []const u8,
 ) !void {
     try sendMessage(allocator, writer, Message{ .update_timer = .{
         .remaining_seconds = remaining_seconds,
         .total_duration = total_duration,
         .status = status,
+        .eta_hhmm = eta_hhmm,
     } });
 }
 
@@ -355,6 +369,38 @@ test "ipc/parseMessage - command roundtrip" {
     try std.testing.expectEqual(message, .command);
     try std.testing.expectEqualStrings("1", message.command.id);
     try std.testing.expectEqualStrings("pause", message.command.command);
+}
+
+test "ipc/parseMessage - update_timer includes eta" {
+    const allocator = std.testing.allocator;
+    const json =
+        "{" ++
+        "\"type\":\"update_timer\"," ++
+        "\"remaining_seconds\":42," ++
+        "\"total_duration\":60," ++
+        "\"status\":\"running\"," ++
+        "\"eta_hhmm\":\"14:35\"" ++
+        "}";
+    const message = try parseMessage(allocator, json);
+    defer freeMessage(allocator, message);
+
+    try std.testing.expectEqual(message, .update_timer);
+    try std.testing.expectEqual(@as(u32, 42), message.update_timer.remaining_seconds);
+    try std.testing.expectEqualStrings("running", message.update_timer.status);
+    try std.testing.expectEqualStrings("14:35", message.update_timer.eta_hhmm);
+}
+
+test "ipc/parseMessage - update_timer missing eta" {
+    const allocator = std.testing.allocator;
+    const json =
+        "{" ++
+        "\"type\":\"update_timer\"," ++
+        "\"remaining_seconds\":42," ++
+        "\"total_duration\":60," ++
+        "\"status\":\"running\"" ++
+        "}";
+
+    try std.testing.expectError(error.MissingField, parseMessage(allocator, json));
 }
 
 // Test parsing a successful command result where error field is null.

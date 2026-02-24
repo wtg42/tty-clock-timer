@@ -79,6 +79,43 @@ fn timerStateToStatus(state: timer_mod.TimerState) []const u8 {
     };
 }
 
+const EtaProjection = struct {
+    frozen_epoch_seconds: ?u64 = null,
+};
+
+fn currentRealEpochSeconds(io: Io) u64 {
+    const now_seconds = Io.Clock.real.now(io).toSeconds();
+    return if (now_seconds < 0) 0 else @intCast(now_seconds);
+}
+
+fn resolveEtaEpochSeconds(
+    state: timer_mod.TimerState,
+    remaining_seconds: u32,
+    now_epoch_seconds: u64,
+    eta_projection: *EtaProjection,
+) u64 {
+    const base_seconds = now_epoch_seconds;
+    const computed = std.math.add(u64, base_seconds, remaining_seconds) catch std.math.maxInt(u64);
+
+    if (state == .paused) {
+        if (eta_projection.frozen_epoch_seconds) |frozen| return frozen;
+        eta_projection.frozen_epoch_seconds = computed;
+        return computed;
+    }
+
+    eta_projection.frozen_epoch_seconds = computed;
+    return computed;
+}
+
+fn formatEtaHhmm(buffer: *[5]u8, epoch_seconds: u64) []const u8 {
+    const day_seconds = (std.time.epoch.EpochSeconds{ .secs = epoch_seconds }).getDaySeconds();
+    return std.fmt.bufPrint(
+        buffer,
+        "{d:0>2}:{d:0>2}",
+        .{ day_seconds.getHoursIntoDay(), day_seconds.getMinutesIntoHour() },
+    ) catch unreachable;
+}
+
 /// Maps CLI parse errors to user-facing messages.
 fn configErrorMessage(err: conf.ParseError) []const u8 {
     return switch (err) {
@@ -662,10 +699,12 @@ fn handleStdinInput(allocator: std.mem.Allocator, reader: *Io.Reader, stdin_is_t
 /// Sends the current timer projection to the selected output stream.
 fn sendTimerProjection(
     allocator: std.mem.Allocator,
+    io: Io,
     writer: *Io.Writer,
     timer: *timer_mod.CountdownTimer,
     total_duration_seconds: u32,
     timer_finished_notified: *bool,
+    eta_projection: *EtaProjection,
 ) !void {
     const finished = timer.isFinished();
     if (finished) {
@@ -678,7 +717,23 @@ fn sendTimerProjection(
     }
 
     const remaining_seconds = @as(u32, @intCast(timer.remaining_ns / std.time.ns_per_s));
-    try ipc.updateTimer(allocator, writer, remaining_seconds, total_duration_seconds, timerStateToStatus(timer.state));
+    const eta_epoch_seconds = resolveEtaEpochSeconds(
+        timer.state,
+        remaining_seconds,
+        currentRealEpochSeconds(io),
+        eta_projection,
+    );
+    var eta_buffer: [5]u8 = undefined;
+    const eta_hhmm = formatEtaHhmm(&eta_buffer, eta_epoch_seconds);
+
+    try ipc.updateTimer(
+        allocator,
+        writer,
+        remaining_seconds,
+        total_duration_seconds,
+        timerStateToStatus(timer.state),
+        eta_hhmm,
+    );
     try writer.flush();
 }
 
@@ -697,6 +752,7 @@ fn applyCommand(
     timer: *timer_mod.CountdownTimer,
     total_duration_seconds: u32,
     timer_finished_notified: *bool,
+    eta_projection: *EtaProjection,
     writer: *Io.Writer,
     command_id: []const u8,
     command: ipc.Command,
@@ -736,7 +792,15 @@ fn applyCommand(
     try writer.flush();
 
     if (!should_exit) {
-        try sendTimerProjection(allocator, writer, timer, total_duration_seconds, timer_finished_notified);
+        try sendTimerProjection(
+            allocator,
+            io,
+            writer,
+            timer,
+            total_duration_seconds,
+            timer_finished_notified,
+            eta_projection,
+        );
     }
 
     return should_exit;
@@ -749,6 +813,7 @@ fn handleSocketCommands(
     timer: *timer_mod.CountdownTimer,
     total_duration_seconds: u32,
     timer_finished_notified: *bool,
+    eta_projection: *EtaProjection,
     reader: *Io.Reader,
     writer: *Io.Writer,
 ) !bool {
@@ -783,6 +848,7 @@ fn handleSocketCommands(
                     timer,
                     total_duration_seconds,
                     timer_finished_notified,
+                    eta_projection,
                     writer,
                     payload.id,
                     command,
@@ -1015,6 +1081,7 @@ fn runEventLoop(
     countdown_timer: *timer_mod.CountdownTimer,
     total_duration_seconds: u32,
     timer_finished_notified: *bool,
+    eta_projection: *EtaProjection,
     socket_stream: *?std.Io.net.Stream,
     tick_duration: std.Io.Clock.Duration,
 ) void {
@@ -1103,6 +1170,7 @@ fn runEventLoop(
                 countdown_timer,
                 total_duration_seconds,
                 timer_finished_notified,
+                eta_projection,
                 socket_reader,
                 socket_writer,
             ) catch false) {
@@ -1117,10 +1185,12 @@ fn runEventLoop(
         if (socket_stream.*) |_| {
             sendTimerProjection(
                 allocator,
+                io,
                 socket_writer,
                 countdown_timer,
                 total_duration_seconds,
                 timer_finished_notified,
+                eta_projection,
             ) catch |err| {
                 stderr_writer.print("Error: Failed to send socket timer event ({s})\n", .{@errorName(err)}) catch {};
                 stderr_writer.flush() catch {};
@@ -1129,10 +1199,12 @@ fn runEventLoop(
         } else {
             sendTimerProjection(
                 allocator,
+                io,
                 stdout_writer,
                 countdown_timer,
                 total_duration_seconds,
                 timer_finished_notified,
+                eta_projection,
             ) catch |err| {
                 stderr_writer.print("Error: Failed to send timer event ({s})\n", .{@errorName(err)}) catch {};
                 stderr_writer.flush() catch {};
@@ -1324,6 +1396,7 @@ pub fn main(init: std.process.Init) !void {
     var socket_writer: std.Io.net.Stream.Writer = undefined;
     const tick_duration = Io.Clock.Duration{ .clock = .awake, .raw = Io.Duration.fromMilliseconds(200) };
     var timer_finished_notified = false;
+    var eta_projection = EtaProjection{};
 
     if (socket_server) |*server| {
         // Step 9: Block until TUI connects, then send initial timer projection.
@@ -1338,10 +1411,12 @@ pub fn main(init: std.process.Init) !void {
 
         sendTimerProjection(
             allocator,
+            io,
             &socket_writer.interface,
             &countdown_timer,
             total_duration_seconds,
             &timer_finished_notified,
+            &eta_projection,
         ) catch |err| {
             try stderr_writer.print("Error: Failed to send initial socket timer event ({s})\n", .{@errorName(err)});
             try stderr_writer.flush();
@@ -1369,6 +1444,7 @@ pub fn main(init: std.process.Init) !void {
         &countdown_timer,
         total_duration_seconds,
         &timer_finished_notified,
+        &eta_projection,
         &socket_stream,
         tick_duration,
     );
@@ -1408,6 +1484,26 @@ test "helpMessage - stable output" {
         "Usage: tic [OPTIONS]\n\nOptions:\n  -m, --minutes <num>    Set countdown minutes\n  -s, --seconds <num>    Set countdown seconds\n      list               Select from history durations\n      list --delete      Delete history durations\n  -h, --help             Show this help message\n\nExample:\n  tic --minutes 25\n  tic -s 90\n  tic list\n  tic list --delete\n",
         helpMessage(),
     );
+}
+
+test "main/resolveEtaEpochSeconds - paused freezes eta" {
+    var eta_projection = EtaProjection{};
+
+    const running_eta = resolveEtaEpochSeconds(.running, 120, 1_000, &eta_projection);
+    try std.testing.expectEqual(@as(u64, 1_120), running_eta);
+
+    const paused_eta = resolveEtaEpochSeconds(.paused, 120, 2_000, &eta_projection);
+    try std.testing.expectEqual(running_eta, paused_eta);
+}
+
+test "main/resolveEtaEpochSeconds - resume recalculates eta" {
+    var eta_projection = EtaProjection{};
+
+    _ = resolveEtaEpochSeconds(.running, 120, 1_000, &eta_projection);
+    _ = resolveEtaEpochSeconds(.paused, 120, 2_000, &eta_projection);
+
+    const resumed_eta = resolveEtaEpochSeconds(.running, 120, 2_100, &eta_projection);
+    try std.testing.expectEqual(@as(u64, 2_220), resumed_eta);
 }
 
 test "main/gumBinaryFromEnv - uses override and ignores empty" {

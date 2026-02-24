@@ -12,6 +12,7 @@ describe("store/createTimerStore", () => {
     expect(store.getState()).toEqual({
       remainingSeconds: null,
       status: "connecting",
+      etaHhmm: null,
       isFinished: false,
       shouldExit: false,
     });
@@ -25,11 +26,13 @@ describe("store/createTimerStore", () => {
       remaining_seconds: 42,
       total_duration: 300,
       status: "running",
+      eta_hhmm: "14:35",
     });
 
     expect(store.getState()).toEqual({
       remainingSeconds: 42,
       status: "running",
+      etaHhmm: "14:35",
       isFinished: false,
       shouldExit: false,
     });
@@ -46,6 +49,7 @@ describe("store/createTimerStore", () => {
     expect(store.getState()).toEqual({
       remainingSeconds: 0,
       status: "finished",
+      etaHhmm: null,
       isFinished: true,
       shouldExit: false,
     });
@@ -84,6 +88,7 @@ describe("store/createTimerStore", () => {
       remaining_seconds: 10,
       total_duration: 60,
       status: "running",
+      eta_hhmm: "14:35",
     });
 
     unsubscribe();

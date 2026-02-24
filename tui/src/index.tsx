@@ -279,6 +279,9 @@ const App = () => {
             />
             <box flexDirection="column" alignItems="center">
               <text attributes={TextAttributes.DIM}>
+                ETA {state().etaHhmm ?? "--:--"}
+              </text>
+              <text attributes={TextAttributes.DIM}>
                 Status: {state().status}
               </text>
               <text attributes={TextAttributes.DIM}>

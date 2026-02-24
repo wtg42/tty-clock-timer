@@ -9,6 +9,7 @@ import type { CoreEvent } from "./protocol.ts";
 export type TimerViewState = {
   remainingSeconds: number | null;
   status: string;
+  etaHhmm: string | null;
   isFinished: boolean;
   shouldExit: boolean;
 };
@@ -16,6 +17,7 @@ export type TimerViewState = {
 const initialState: TimerViewState = {
   remainingSeconds: null,
   status: "connecting",
+  etaHhmm: null,
   isFinished: false,
   shouldExit: false,
 };
@@ -48,6 +50,7 @@ export const createTimerStore = () => {
             ...state,
             remainingSeconds: event.remaining_seconds,
             status: event.status,
+            etaHhmm: event.eta_hhmm,
             isFinished: event.status === "finished",
           };
           break;
