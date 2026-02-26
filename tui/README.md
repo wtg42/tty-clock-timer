@@ -39,6 +39,7 @@ Keyboard (p/r/s/q)
 +---------+-----------------+              +----------+-----------+
           ^                                           |
           | CoreEvent JSON lines                      | emits events:
+          |                                           | init /
           |                                           | update_timer /
           |                                           | timer_finished / exit
           +-----------------------------+-------------+
@@ -70,11 +71,13 @@ Keyboard (p/r/s/q)
 - `src/unix_socket_adapter.ts`: transport layer. Handles Unix socket connection, line-delimited JSON framing, and command request/response correlation.
 - `src/protocol.ts`: protocol contract boundary. Defines command/event types and runtime guards (`isCoreEvent`, `isCommandResultMessage`).
 - `src/store.ts`: event projection layer. Projects `CoreEvent` into `TimerViewState` and drives UI updates through a subscribe API.
+- `src/sound.ts`: sound playback helper (`Bun.spawn`) used after timer completion when sound config exists.
 
 ## Protocol Contract
 
 - TUI and core exchange JSON messages.
-- Inbound events: `update_timer`, `timer_finished`, `exit`.
+- Inbound events: `init`, `update_timer`, `timer_finished`, `exit`.
+- `init` carries initial runtime config (`sound: SoundConfig | null`).
 - Outbound commands: `pause`, `resume`, `reset`, `quit`.
 - `src/protocol.ts` is the only type + runtime validation entrypoint, preventing unvalidated payloads from directly mutating UI state.
 
@@ -83,7 +86,10 @@ Keyboard (p/r/s/q)
 - Supported keys: `p` (pause), `r` (resume), `s` (reset), `q` (quit).
 - Command path: `index.tsx` -> `command_plane.ts` -> `unix_socket_adapter.ts` -> core.
 - Event path: core -> `unix_socket_adapter.ts` -> `protocol.ts` guard -> `store.ts` -> `index.tsx` render.
+- Startup includes socket retry loop (500ms interval) until connected or shutdown.
+- UI applies command dedup (250ms window) and repeated error dedup (1000ms window).
 - Socket path is generated uniquely by core on every run (to avoid multi-instance collisions), with optional override via `--socket-path <path>`.
+- On `timer_finished`, TUI plays configured sound via `playSound(player, file)` when `init.sound` is available; playback failures are silent by design.
 
 ## Unit Test Scope (Current)
 

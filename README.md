@@ -14,6 +14,10 @@ One-key Pause / Resume / Reset.
 
 Usage history is saved automatically.
 
+Interactive history selection and cleanup (`list`, `list --delete`).
+
+Optional finished sound setup (`--setup-sound`).
+
 No network. No tracking. No overhead.
 
 Stay in the terminal. Stay in the moment.
@@ -78,6 +82,19 @@ Built with AI-assisted coding tools.
   -> Core resolves TUI runtime contract (TTY_CLOCK_TUI_CWD/TTY_CLOCK_TUI_ENTRY/APPDIR).
   -> If TUI connects: use socket command/event flow.
   -> If TUI not connected: fallback stdin path supports q to quit.
+
+[list]
+  -> Core loads history from XDG state path.
+  -> Prefer gum choose; fallback to built-in text menu when gum unavailable.
+  -> Selected duration starts timer flow.
+
+[list --delete]
+  -> Core loads history and opens gum multi-select delete.
+  -> Output remaining entries, or "no history" when empty/canceled.
+
+[--setup-sound]
+  -> Core enters interactive setup (does not start timer/TUI).
+  -> Detect player or accept manual path, then write user config.
 ```
 
 ## Requirements
@@ -98,6 +115,9 @@ Built with AI-assisted coding tools.
 cd core
 zig build
 zig build run -- --seconds 90
+zig build run -- list
+zig build run -- list --delete
+zig build run -- --setup-sound
 zig build test
 ```
 

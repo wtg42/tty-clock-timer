@@ -25,22 +25,26 @@ packaging/
 | Tool | Version | Description |
 |------|------|------|
 | `zig` | 0.16+ | Builds the core binary |
-| `bun` | 1.x | TUI runtime (must be installed on host) |
-| `appimagetool` | - | Packages AppDir into `.AppImage`; place at `packaging/tools/appimagetool.AppImage` or set `APPIMAGETOOL_BIN` |
+| `bun` | 1.x | Required on host (used to install/build TUI bundle during packaging) |
+| `appimagetool` | - | Packages AppDir into `.AppImage` (auto-discovered or auto-downloaded by scripts) |
+| `gum` | - | Required for runtime interactive list/setup flows (auto-downloaded and bundled) |
 
 You can download `appimagetool` from [GitHub Releases](https://github.com/AppImage/appimagetool/releases).
 
 ## Quick Start
 
 ```bash
-# 1. Build core binary
-./packaging/appimage/scripts/build-core.sh
-
-# 2. Package AppImage
+# 1. Package AppImage (includes dependency checks + core/tui build)
 APPIMAGE_VERSION=0.1.0 ./packaging/appimage/scripts/package-appimage.sh
 
-# 3. Verify artifact
+# 2. Verify artifact
 APPIMAGE_VERSION=0.1.0 ./packaging/appimage/scripts/verify-artifact.sh
+```
+
+Optional (for isolated core build debugging):
+
+```bash
+./packaging/appimage/scripts/build-core.sh
 ```
 
 Output path: `packaging/out/appimage/tty-clock-timer-<version>-linux-x86_64.AppImage`
@@ -49,16 +53,25 @@ Output path: `packaging/out/appimage/tty-clock-timer-<version>-linux-x86_64.AppI
 
 ### What if `appimagetool` cannot be found?
 
-Scripts resolve `appimagetool` in this order:
+`setup-deps.sh` / `package-appimage.sh` resolve `appimagetool` in this order:
 1. Path specified by the `APPIMAGETOOL_BIN` environment variable
 2. `packaging/tools/appimagetool.AppImage`
 3. `appimagetool` found in system `PATH`
+4. Auto-download to `packaging/tools/appimagetool.AppImage` (v1.9.1)
 
 Recommended: put the downloaded binary at `packaging/tools/appimagetool.AppImage` and mark it executable.
 
-### Why does AppImage still require host `bun`?
+### Why does packaging still require host `bun`?
 
-The TUI runtime is currently packaged as source (`tui/`) and does not embed the `bun` binary yet. AppImage `AppRun` calls host `bun` to execute the TUI. This is a known limitation and may be replaced by a bundled runtime later.
+`package-appimage.sh` builds TUI from source (`tui/`) before assembling AppDir, so host `bun` is required at packaging time. The final AppImage runs bundled `index.js` + `libopentui.so` from AppDir via core/TUI contract.
+
+### How is `gum` handled?
+
+`setup-deps.sh` ensures `packaging/tools/gum/linux-x64/gum` exists and is executable (auto-download via `fetch-gum.sh` when missing). Packaging then bundles it into:
+
+`usr/lib/tty-clock-timer/tools/gum/linux-x64/gum`
+
+At runtime, `AppRun` exports `TTY_CLOCK_GUM_BIN` to that bundled path by default.
 
 ### How is `APPIMAGE_VERSION` used?
 
