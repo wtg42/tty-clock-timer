@@ -1,4 +1,4 @@
-//! Library root for `tty-clock-timer` core module.
+//! Public library entrypoint for the tty-clock-timer core package.
 //!
-//! This file is the public aggregation point when `core/src` is used as a
-//! library target. Exported modules can be added here as public constants.
+//! Keep top-level exports here so downstream users can import core modules from one place.
+

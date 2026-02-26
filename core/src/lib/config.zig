@@ -1,9 +1,7 @@
-//! CLI argument parsing for timer duration/help flags.
+//! CLI argument parsing and user config persistence helpers.
 //!
-//! Supported flags:
-//! - `--minutes <num>` / `-m <num>`
-//! - `--seconds <num>` / `-s <num>`
-//! - `--help` / `-h`
+//! This module handles command parsing and reads/writes config.json under XDG/HOME paths.
+
 const std = @import("std");
 const Io = std.Io;
 const Dir = std.Io.Dir;
@@ -60,6 +58,7 @@ pub const ParseError = error{
     OutOfMemory,
 };
 
+/// Resolves config.json path using XDG_CONFIG_HOME first, then HOME fallback.
 pub fn resolveConfigPath(
     allocator: std.mem.Allocator,
     environ_map: *const std.process.Environ.Map,
@@ -84,6 +83,7 @@ pub fn resolveConfigPath(
     );
 }
 
+/// Frees heap-owned fields inside a loaded user config object.
 pub fn freeUserConfig(allocator: std.mem.Allocator, config: UserConfig) void {
     if (config.sound) |sound| {
         allocator.free(sound.player);
@@ -91,6 +91,7 @@ pub fn freeUserConfig(allocator: std.mem.Allocator, config: UserConfig) void {
     }
 }
 
+/// Reads and parses user config, returning defaults when file data is missing or invalid.
 pub fn readConfig(
     allocator: std.mem.Allocator,
     io: Io,
@@ -139,6 +140,7 @@ pub fn readConfig(
     };
 }
 
+/// Writes config updates and merges sound settings with existing JSON when possible.
 pub fn writeConfig(
     allocator: std.mem.Allocator,
     io: Io,
@@ -198,14 +200,14 @@ pub fn writeConfig(
     });
 }
 
-/// Parses args from global process argv (kept for compatibility/testing).
+/// Parses arguments from global argv and forwards to the shared slice parser.
 pub fn parseArgs2(allocator: std.mem.Allocator) !Config {
     const args = try std.process.argsAlloc(allocator);
     defer std.process.argsFree(allocator, args);
     return parseArgsFromSlice(args[1..]);
 }
 
-/// Parses args using `std.process.Init.Minimal` iterator.
+/// Parses arguments from Init.Minimal iterator and forwards to the shared parser.
 pub fn parseArgs(allocator: std.mem.Allocator, init: std.process.Init.Minimal) !Config {
     var argsSlice = try std.ArrayList([]const u8).initCapacity(allocator, 0);
     defer argsSlice.deinit(allocator);
@@ -222,7 +224,7 @@ pub fn parseArgs(allocator: std.mem.Allocator, init: std.process.Init.Minimal) !
     return parseArgsFromSlice(argsSlice.items);
 }
 
-/// Core parser from argv slice (without executable name).
+/// Parses CLI args into command, duration, and help behavior.
 pub fn parseArgsFromSlice(args: []const []const u8) !Config {
     var config = Config{
         .command = .start,
@@ -291,31 +293,32 @@ pub fn parseArgsFromSlice(args: []const []const u8) !Config {
     return ParseError.UnknownArgument;
 }
 
-/// Returns true when `arg` is help flag.
+/// Checks whether an argument matches the help flag set.
 fn isHelpArg(arg: []const u8) bool {
     return std.mem.eql(u8, arg, "--help") or std.mem.eql(u8, arg, "-h");
 }
 
-/// Returns true when `arg` is minutes flag.
+/// Checks whether an argument matches minutes flags.
 fn isMinutesArg(arg: []const u8) bool {
     return std.mem.eql(u8, arg, "--minutes") or std.mem.eql(u8, arg, "-m");
 }
 
-/// Returns true when `arg` is seconds flag.
+/// Checks whether an argument matches seconds flags.
 fn isSecondsArg(arg: []const u8) bool {
     return std.mem.eql(u8, arg, "--seconds") or std.mem.eql(u8, arg, "-s");
 }
 
-/// Returns true when `arg` is list subcommand.
+/// Checks whether an argument starts the history list command.
 fn isListArg(arg: []const u8) bool {
     return std.mem.eql(u8, arg, "list");
 }
 
-/// Returns true when `arg` is delete flag.
+/// Checks whether an argument is the list deletion flag.
 fn isDeleteArg(arg: []const u8) bool {
     return std.mem.eql(u8, arg, "--delete");
 }
 
+/// Checks whether an argument starts interactive sound setup.
 fn isSetupSoundArg(arg: []const u8) bool {
     return std.mem.eql(u8, arg, "--setup-sound");
 }

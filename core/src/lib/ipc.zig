@@ -1,8 +1,7 @@
-//! IPC message schema and helpers between Zig core and OpenTUI process.
+//! JSONL IPC schema and helper APIs for core <-> TUI communication.
 //!
-//! Transport format is JSON lines (one JSON object per line).
-//! This module defines the message union, parsing/serialization helpers,
-//! and convenience send APIs used by `main.zig`.
+//! Messages are serialized as one JSON object per line and routed by the `type` discriminator.
+
 const std = @import("std");
 const Io = std.Io;
 
@@ -39,8 +38,7 @@ pub const Command = enum {
     reset,
     quit,
 
-    /// Parses command string (e.g., "pause") to Command enum tag.
-    /// Returns null if the string does not match any command.
+    /// Parses command text into a Command enum value when recognized.
     pub fn parse(value: []const u8) ?Command {
         inline for (std.meta.fields(Command)) |field| {
             if (std.mem.eql(u8, value, field.name)) {
@@ -50,7 +48,7 @@ pub const Command = enum {
         return null;
     }
 
-    /// Returns command tag name as a string slice for JSON serialization.
+    /// Returns the command tag name as a string slice.
     pub fn asSlice(self: Command) []const u8 {
         return @tagName(self);
     }
@@ -93,8 +91,7 @@ pub const Message = union(MessageType) {
         @"error": ?[]const u8,
     },
 
-    /// Custom JSON serialization that outputs {"type": "tag_name", ...fields...}.
-    /// Ensures "type" field appears first for clarity.
+    /// Serializes Message payload with a stable `type` discriminator field first.
     pub fn jsonStringify(self: Message, jws: anytype) !void {
         try jws.beginObject();
         // Always emit "type" field first
@@ -158,9 +155,7 @@ pub const ParseError = error{
     InvalidMessage,
 };
 
-/// Releases heap-owned payload fields inside parsed message.
-/// Must be called for each message created by parseMessage() to avoid leaks.
-/// Messages created directly (e.g., in sendMessage) are not heap-allocated.
+/// Frees heap-owned fields from messages produced by parseMessage.
 pub fn freeMessage(allocator: std.mem.Allocator, message: Message) void {
     switch (message) {
         .update_timer => |payload| {
@@ -187,9 +182,7 @@ pub fn freeMessage(allocator: std.mem.Allocator, message: Message) void {
     }
 }
 
-/// Parses one complete JSON message line into typed `Message`.
-/// Expects JSON object with mandatory "type" field indicating the message variant.
-/// All string fields in parsed payloads are heap-allocated copies; call freeMessage() when done.
+/// Parses one JSON line into a typed Message union value.
 pub fn parseMessage(allocator: std.mem.Allocator, json: []const u8) !Message {
     // Parse raw JSON into generic value tree
     var parsed = try std.json.parseFromSlice(std.json.Value, allocator, json, .{});
@@ -344,9 +337,7 @@ pub fn parseMessage(allocator: std.mem.Allocator, json: []const u8) !Message {
     return error.InvalidMessageType;
 }
 
-/// Serializes a Message to JSON and writes it with a trailing newline.
-/// Uses custom jsonStringify() method on Message to ensure "type" field comes first.
-/// Returns error if serialization or I/O fails.
+/// Serializes a Message and writes it as one JSON line.
 pub fn sendMessage(allocator: std.mem.Allocator, writer: *Io.Writer, message: Message) !void {
     const json = try std.json.Stringify.valueAlloc(allocator, message, .{});
     defer allocator.free(json);
@@ -354,8 +345,7 @@ pub fn sendMessage(allocator: std.mem.Allocator, writer: *Io.Writer, message: Me
     try writer.writeByte('\n');
 }
 
-/// Sends `update_timer` message with current timer state.
-/// Typically called every ~1 second in the main event loop.
+/// Sends an `update_timer` event with remaining time, status, and ETA.
 pub fn updateTimer(
     allocator: std.mem.Allocator,
     writer: *Io.Writer,
@@ -372,6 +362,7 @@ pub fn updateTimer(
     } });
 }
 
+/// Sends an `init` event with optional sound configuration payload.
 pub fn sendInit(
     allocator: std.mem.Allocator,
     writer: *Io.Writer,
@@ -380,21 +371,17 @@ pub fn sendInit(
     try sendMessage(allocator, writer, Message{ .init = .{ .sound = sound } });
 }
 
-/// Sends `timer_finished` message when countdown reaches zero.
-/// Signals to TUI that the timer has completed.
+/// Sends a `timer_finished` event when countdown reaches zero.
 pub fn notifyTimerFinished(allocator: std.mem.Allocator, writer: *Io.Writer, total_duration: u32) !void {
     try sendMessage(allocator, writer, Message{ .timer_finished = .{ .total_duration = total_duration } });
 }
 
-/// Sends `exit` message to signal graceful process termination.
-/// Called when timer finishes or user presses quit key.
+/// Sends an `exit` event for graceful shutdown coordination.
 pub fn sendExit(allocator: std.mem.Allocator, writer: *Io.Writer) !void {
     try sendMessage(allocator, writer, Message{ .exit = {} });
 }
 
-/// Sends `command_result` message in response to a received command.
-/// Use the same id from the incoming command for request/response correlation.
-/// Pass error_message=null on success, or error message string on failure.
+/// Sends a `command_result` event with success state and optional error.
 pub fn sendCommandResult(
     allocator: std.mem.Allocator,
     writer: *Io.Writer,
@@ -409,8 +396,7 @@ pub fn sendCommandResult(
     } });
 }
 
-/// Determines if keyboard input signals a quit/exit request.
-/// Returns true if user pressed "q", false otherwise.
+/// Checks whether keyboard input requests process quit.
 pub fn handleKeyboardInput(key: []const u8) bool {
     return std.mem.eql(u8, key, "q");
 }

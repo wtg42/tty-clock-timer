@@ -1,10 +1,8 @@
-//! tty_clock_timer CLI entrypoint.
+//! CLI runtime orchestration for tty-clock-timer core.
 //!
-//! Responsibilities:
-//! - Parse CLI arguments and initialize countdown timer state.
-//! - Spawn OpenTUI child process when available and bridge IPC via Unix socket.
-//! - Handle fallback keyboard input (`q`) when no UI socket is connected.
-//! - Emit timer projection events (`update_timer`, `timer_finished`, `exit`).
+//! This module glues together argument parsing, history, sound setup, IPC, and timer updates.
+//! It also coordinates the optional OpenTUI child process over a Unix socket bridge.
+
 const std = @import("std");
 const Io = std.Io;
 const Dir = std.Io.Dir;
@@ -47,6 +45,7 @@ const UiCwdCandidates = struct {
     items: [MAX_UI_CWD_CANDIDATES][]const u8 = undefined,
     len: usize = 0,
 
+    /// Adds a UI cwd candidate when the value is non-empty and capacity allows it.
     fn append(self: *UiCwdCandidates, candidate: []const u8) void {
         if (candidate.len == 0) return;
         if (self.len >= self.items.len) return;
@@ -54,11 +53,13 @@ const UiCwdCandidates = struct {
         self.len += 1;
     }
 
+    /// Returns the currently collected UI cwd candidates as a compact slice.
     fn asSlice(self: *const UiCwdCandidates) []const []const u8 {
         return self.items[0..self.len];
     }
 };
 
+/// Returns the CLI help text shown for onboarding and usage reminders.
 fn helpMessage() []const u8 {
     return "Usage: tic [OPTIONS]\n" ++
         "\n" ++
@@ -78,6 +79,7 @@ fn helpMessage() []const u8 {
         "  tic list --delete\n";
 }
 
+/// Maps internal timer state to the status string used by IPC payloads.
 fn timerStateToStatus(state: timer_mod.TimerState) []const u8 {
     return switch (state) {
         .idle => "idle",
@@ -91,12 +93,13 @@ const EtaProjection = struct {
     frozen_epoch_seconds: ?u64 = null,
 };
 
+/// Reads current real clock seconds and clamps negative values to zero.
 fn currentRealEpochSeconds(io: Io) u64 {
     const now_seconds = Io.Clock.real.now(io).toSeconds();
     return if (now_seconds < 0) 0 else @intCast(now_seconds);
 }
 
-/// Freezes ETA for a new timer cycle. Called on start/resume/reset.
+/// Freezes a fresh ETA baseline for a new run, resume, or reset cycle.
 fn freezeEtaForNewCycle(
     remaining_seconds: u32,
     now_epoch_seconds: u64,
@@ -107,6 +110,7 @@ fn freezeEtaForNewCycle(
     eta_projection.frozen_epoch_seconds = computed;
 }
 
+/// Resolves the ETA epoch, keeping it frozen while running or paused.
 fn resolveEtaEpochSeconds(
     state: timer_mod.TimerState,
     remaining_seconds: u32,
@@ -138,6 +142,7 @@ fn resolveEtaEpochSeconds(
     return computed;
 }
 
+/// Formats ETA epoch seconds into `HH:MM` for user-facing updates.
 fn formatEtaHhmm(buffer: *[5]u8, epoch_seconds: u64) []const u8 {
     const day_seconds = (std.time.epoch.EpochSeconds{ .secs = epoch_seconds }).getDaySeconds();
     return std.fmt.bufPrint(
@@ -147,7 +152,7 @@ fn formatEtaHhmm(buffer: *[5]u8, epoch_seconds: u64) []const u8 {
     ) catch unreachable;
 }
 
-/// Maps CLI parse errors to user-facing messages.
+/// Converts CLI parse errors into readable messages for terminal output.
 fn configErrorMessage(err: conf.ParseError) []const u8 {
     return switch (err) {
         conf.ParseError.MissingMinutesValue => "Error: --minutes requires a numeric value\n",
@@ -159,12 +164,14 @@ fn configErrorMessage(err: conf.ParseError) []const u8 {
     };
 }
 
+/// Builds a friendly duration label like `MM:SS (Ns)` for menus.
 fn formatDurationLabel(allocator: std.mem.Allocator, duration_seconds: u32) ![]u8 {
     const minutes = duration_seconds / 60;
     const seconds = duration_seconds % 60;
     return std.fmt.allocPrint(allocator, "{d:0>2}:{d:0>2} ({d}s)", .{ minutes, seconds, duration_seconds });
 }
 
+/// Returns platform-aware candidate paths for bundled gum binaries.
 fn bundledGumPathCandidates() []const []const u8 {
     const builtin = @import("builtin");
     return switch (builtin.os.tag) {
@@ -210,18 +217,21 @@ fn bundledGumPathCandidates() []const []const u8 {
     };
 }
 
+/// Checks whether a file path is accessible from the current working directory.
 fn pathExists(io: Io, path: []const u8) bool {
     const file = Dir.cwd().openFile(io, path, .{}) catch return false;
     file.close(io);
     return true;
 }
 
+/// Reads gum binary override from environment and ignores empty values.
 fn gumBinaryFromEnv(environ_map: *const std.process.Environ.Map) ?[]const u8 {
     const value = environ_map.get(GUM_BINARY_ENV) orelse return null;
     if (value.len == 0) return null;
     return value;
 }
 
+/// Picks the first usable gum binary from env override or bundled candidates.
 fn findAvailableGumBinary(
     io: Io,
     environ_map: *const std.process.Environ.Map,
@@ -238,10 +248,12 @@ fn findAvailableGumBinary(
     return null;
 }
 
+/// Finds a bundled gum executable using configured search candidates.
 fn findBundledGum(io: Io, environ_map: *const std.process.Environ.Map) ?[]const u8 {
     return findAvailableGumBinary(io, environ_map, bundledGumPathCandidates());
 }
 
+/// Checks whether gum debug logging is enabled via environment flags.
 fn gumDebugEnabled(environ_map: *const std.process.Environ.Map) bool {
     const value = environ_map.get(GUM_DEBUG_ENV) orelse return false;
     return std.mem.eql(u8, value, "1") or
@@ -249,6 +261,7 @@ fn gumDebugEnabled(environ_map: *const std.process.Environ.Map) bool {
         std.mem.eql(u8, value, "yes");
 }
 
+/// Duplicates an argument, tracks ownership, and appends it to argv.
 fn appendArgOwned(
     allocator: std.mem.Allocator,
     args: *std.ArrayList([]const u8),
@@ -260,6 +273,7 @@ fn appendArgOwned(
     try args.append(allocator, duped);
 }
 
+/// Runs gum choose to pick one history duration and maps exit semantics.
 fn chooseWithGum(
     allocator: std.mem.Allocator,
     io: Io,
@@ -400,6 +414,7 @@ fn chooseWithGum(
     return .failed;
 }
 
+/// Runs gum multi-select and returns selected history labels for deletion.
 fn deleteWithGum(
     allocator: std.mem.Allocator,
     io: Io,
@@ -548,6 +563,7 @@ fn deleteWithGum(
     return .{ .chosen = try selected_labels.toOwnedSlice(allocator) };
 }
 
+/// Runs gum choose for arbitrary text options and returns selected text.
 fn gumChooseText(
     allocator: std.mem.Allocator,
     io: Io,
@@ -619,6 +635,7 @@ fn gumChooseText(
     return .{ .chosen = try allocator.dupe(u8, selected) };
 }
 
+/// Runs gum input and returns trimmed user text when available.
 fn gumInputText(
     allocator: std.mem.Allocator,
     io: Io,
@@ -686,6 +703,7 @@ fn gumInputText(
     return .{ .chosen = try allocator.dupe(u8, value) };
 }
 
+/// Resolves a sound player binary path by invoking `which`.
 fn detectPlayerPath(
     allocator: std.mem.Allocator,
     io: Io,
@@ -724,6 +742,7 @@ fn detectPlayerPath(
     return try allocator.dupe(u8, first_line);
 }
 
+/// Guides interactive sound setup and persists the chosen player and file.
 fn runSetupSound(
     allocator: std.mem.Allocator,
     io: Io,
@@ -811,6 +830,7 @@ fn runSetupSound(
     try stdout_writer.flush();
 }
 
+/// Uses stdin fallback selection when gum UI is unavailable.
 fn chooseWithFallback(
     allocator: std.mem.Allocator,
     io: Io,
@@ -851,6 +871,7 @@ fn chooseWithFallback(
     }
 }
 
+/// Loads history and resolves one duration via gum or stdin fallback.
 fn resolveDurationFromHistory(
     allocator: std.mem.Allocator,
     io: Io,
@@ -889,6 +910,7 @@ fn resolveDurationFromHistory(
     return try chooseWithFallback(allocator, io, stdout_writer, entries);
 }
 
+/// Loads history, deletes selected entries, and writes the updated list.
 fn resolveDeletionFromHistory(
     allocator: std.mem.Allocator,
     io: Io,
@@ -958,7 +980,7 @@ fn resolveDeletionFromHistory(
     try stdout_writer.flush();
 }
 
-/// Consumes buffered stdin input and returns `true` when quit is requested.
+/// Consumes buffered stdin commands and reports whether quit was requested.
 fn handleStdinInput(allocator: std.mem.Allocator, reader: *Io.Reader, stdin_is_tty: bool) !bool {
     while (true) {
         const buffered = reader.buffered();
@@ -990,7 +1012,7 @@ fn handleStdinInput(allocator: std.mem.Allocator, reader: *Io.Reader, stdin_is_t
     }
 }
 
-/// Sends the current timer projection to the selected output stream.
+/// Emits the current timer projection to stdout or socket writer.
 fn sendTimerProjection(
     allocator: std.mem.Allocator,
     io: Io,
@@ -1031,7 +1053,7 @@ fn sendTimerProjection(
     try writer.flush();
 }
 
-/// Removes stale Unix socket file if it exists.
+/// Deletes a stale socket file and treats missing path as harmless.
 fn clearSocketPath(io: Io, path: []const u8) !void {
     Dir.cwd().deleteFile(io, path) catch |err| switch (err) {
         error.FileNotFound => {},
@@ -1039,7 +1061,7 @@ fn clearSocketPath(io: Io, path: []const u8) !void {
     };
 }
 
-/// Applies a parsed IPC command and reports command_result to UI.
+/// Applies one IPC command, sends command result, and returns exit intent.
 fn applyCommand(
     allocator: std.mem.Allocator,
     io: Io,
@@ -1106,7 +1128,7 @@ fn applyCommand(
     return should_exit;
 }
 
-/// Processes buffered IPC lines and executes commands from UI.
+/// Parses buffered socket messages and executes command payloads.
 fn handleSocketCommands(
     allocator: std.mem.Allocator,
     io: Io,
@@ -1167,8 +1189,7 @@ const RawModeContext = struct {
     stdin_is_tty: bool,
 };
 
-/// Set stdin to raw mode (no echo, no canonical input) for single-key input (`q`).
-/// Returns a context for restoration via defer.
+/// Configures stdin raw mode for single-key control and returns restore context.
 fn setupRawMode(stderr_writer: *Io.Writer) !RawModeContext {
     var original_termios: ?std.posix.termios = null;
     const stdin_handle = Io.File.stdin().handle;
@@ -1197,7 +1218,7 @@ fn setupRawMode(stderr_writer: *Io.Writer) !RawModeContext {
     };
 }
 
-/// Resolves AppImage runtime TUI location from APPDIR contract.
+/// Builds an AppImage TUI runtime cwd candidate from `APPDIR`.
 fn resolveAppImageUiCwdCandidate(
     environ_map: *const std.process.Environ.Map,
     buffer: []u8,
@@ -1207,7 +1228,7 @@ fn resolveAppImageUiCwdCandidate(
     return std.fmt.bufPrint(buffer, "{s}/usr/lib/tty-clock-timer/tui", .{appdir}) catch null;
 }
 
-/// Collects ordered TUI cwd candidates according to artifact contract.
+/// Collects ordered TUI cwd candidates from env overrides and fallbacks.
 fn collectUiCwdCandidates(
     environ_map: *const std.process.Environ.Map,
     appdir_candidate: ?[]const u8,
@@ -1226,7 +1247,7 @@ fn collectUiCwdCandidates(
     return candidates;
 }
 
-/// Resolve TUI working directory from contract candidates.
+/// Finds the first existing TUI working directory from candidate paths.
 fn findUiCwd(io: Io, candidates: []const []const u8) ?[]const u8 {
     for (candidates) |candidate| {
         if (Dir.cwd().openDir(io, candidate, .{})) |dir| {
@@ -1237,12 +1258,12 @@ fn findUiCwd(io: Io, candidates: []const []const u8) ?[]const u8 {
     return null;
 }
 
-/// Resolves TUI entry path from artifact contract.
+/// Resolves the TUI entry file path from env override or default value.
 fn resolveUiEntry(environ_map: *const std.process.Environ.Map) []const u8 {
     return environ_map.get("TTY_CLOCK_TUI_ENTRY") orelse DEFAULT_UI_ENTRY;
 }
 
-/// Validates contract entry exists within resolved TUI runtime cwd.
+/// Checks whether the configured TUI entry exists under the resolved cwd.
 fn uiEntryExists(io: Io, cwd: []const u8, entry: []const u8) bool {
     var dir = Dir.cwd().openDir(io, cwd, .{}) catch return false;
     defer dir.close(io);
@@ -1252,7 +1273,7 @@ fn uiEntryExists(io: Io, cwd: []const u8, entry: []const u8) bool {
     return true;
 }
 
-/// Reports missing runtime artifact diagnostics.
+/// Prints diagnostics when no valid TUI runtime cwd can be resolved.
 fn printMissingUiArtifactError(stderr_writer: *Io.Writer, candidates: []const []const u8) !void {
     try stderr_writer.print(
         "Error: Missing TUI runtime artifact (contract cwd unresolved)\n",
@@ -1272,7 +1293,7 @@ fn printMissingUiArtifactError(stderr_writer: *Io.Writer, candidates: []const []
     );
 }
 
-/// Reports invalid runtime entry diagnostics.
+/// Prints diagnostics when configured TUI entry path is invalid.
 fn printInvalidUiEntryError(stderr_writer: *Io.Writer, cwd: []const u8, entry: []const u8) !void {
     try stderr_writer.print(
         "Error: Invalid TUI runtime entry (contract entry unresolved)\n",
@@ -1286,7 +1307,7 @@ fn printInvalidUiEntryError(stderr_writer: *Io.Writer, cwd: []const u8, entry: [
     );
 }
 
-/// Allows UI child a brief graceful shutdown window, then reaps/forces cleanup.
+/// Gives UI child a short grace period, then waits or force-kills.
 fn teardownUiChild(io: Io, child: *std.process.Child) void {
     const grace = Io.Clock.Duration{ .clock = .awake, .raw = Io.Duration.fromMilliseconds(300) };
     Io.Clock.Duration.sleep(grace, io) catch {};
@@ -1302,7 +1323,7 @@ const SocketServerContext = struct {
     socket_path: []u8,
 };
 
-/// Generates per-execution unique socket path for IPC.
+/// Generates a random per-run Unix socket path for IPC.
 fn generateSocketPath(allocator: std.mem.Allocator, io: Io) ![]u8 {
     var random_bytes: [8]u8 = undefined;
     io.random(&random_bytes);
@@ -1322,8 +1343,7 @@ fn generateSocketPath(allocator: std.mem.Allocator, io: Io) ![]u8 {
     );
 }
 
-/// Prepare Unix socket server for TUI <-> core IPC bridge.
-/// Handles stale files and retries on path conflict.
+/// Creates and binds the Unix socket server with retry handling.
 fn setupSocket(allocator: std.mem.Allocator, io: Io, stderr_writer: *Io.Writer) !SocketServerContext {
     var attempts: u8 = 0;
     while (attempts < SOCKET_BIND_RETRY_LIMIT) : (attempts += 1) {
@@ -1368,7 +1388,7 @@ fn setupSocket(allocator: std.mem.Allocator, io: Io, stderr_writer: *Io.Writer) 
     std.process.exit(1);
 }
 
-/// Main event loop: poll stdin/socket, handle commands, advance timer, emit updates.
+/// Runs the main polling loop for stdin/socket input, commands, and timer ticks.
 fn runEventLoop(
     allocator: std.mem.Allocator,
     io: Io,
@@ -1520,6 +1540,7 @@ fn runEventLoop(
     }
 }
 
+/// Runs the CLI lifecycle from argument parsing to timer loop shutdown.
 pub fn main(init: std.process.Init) !void {
     // Step 1: Use allocator provided by std.process.Init.
     const allocator = init.gpa;

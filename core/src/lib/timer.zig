@@ -1,7 +1,7 @@
-//! Countdown timer state machine.
+//! Countdown timer state machine and time math utilities.
 //!
-//! Provides start/pause/unpause/update/reset operations and keeps remaining
-//! duration in nanoseconds. Time source comes from `std.Io.Timestamp`.
+//! It tracks lifecycle transitions and updates remaining time using monotonic timestamps.
+
 const std = @import("std");
 
 pub const TimerState = enum {
@@ -17,7 +17,7 @@ pub const CountdownTimer = struct {
     state: TimerState,
     reset_ns: u64,
 
-    /// Creates a timer in idle state with initial duration.
+    /// Creates a countdown timer in idle state with configured reset duration.
     pub fn init(duration_ns: u64) CountdownTimer {
         return .{
             .last_tick = null,
@@ -27,7 +27,7 @@ pub const CountdownTimer = struct {
         };
     }
 
-    /// Starts timer or restarts from reset duration, depending on state.
+    /// Starts or restarts the timer depending on current lifecycle state.
     pub fn start(self: *CountdownTimer, io: std.Io) !void {
         switch (self.state) {
             .idle => {
@@ -48,7 +48,7 @@ pub const CountdownTimer = struct {
         self.last_tick = nowTimestamp(io);
     }
 
-    /// Pauses a running timer and preserves remaining duration.
+    /// Pauses a running timer while preserving the current remaining duration.
     pub fn pause(self: *CountdownTimer, io: std.Io) void {
         if (self.state != .running) return;
 
@@ -59,7 +59,7 @@ pub const CountdownTimer = struct {
         self.last_tick = null;
     }
 
-    /// Resumes timer from paused state.
+    /// Resumes a paused timer from its preserved remaining duration.
     pub fn unpause(self: *CountdownTimer, io: std.Io) !void {
         if (self.state != .paused) return;
 
@@ -67,7 +67,7 @@ pub const CountdownTimer = struct {
         self.last_tick = nowTimestamp(io);
     }
 
-    /// Applies elapsed time since last tick when timer is running.
+    /// Advances running timer state using elapsed monotonic time.
     pub fn update(self: *CountdownTimer, io: std.Io) void {
         if (self.state != .running) return;
 
@@ -90,7 +90,7 @@ pub const CountdownTimer = struct {
         self.remaining_ns -= elapsed_ns;
     }
 
-    /// Returns remaining time formatted as `MM:SS`.
+    /// Formats remaining time as `MM:SS` for display.
     pub fn getFormattedTime(self: *const CountdownTimer, allocator: std.mem.Allocator) ![]u8 {
         const total_seconds = self.remaining_ns / std.time.ns_per_s;
         const minutes = total_seconds / 60;
@@ -99,7 +99,7 @@ pub const CountdownTimer = struct {
         return std.fmt.allocPrint(allocator, "{d:0>2}:{d:0>2}", .{ minutes, seconds });
     }
 
-    /// Returns true when timer is finished; updates state on zero remaining.
+    /// Reports finished state and normalizes state when remaining time is zero.
     pub fn isFinished(self: *CountdownTimer) bool {
         if (self.remaining_ns == 0) {
             self.state = .finished;
@@ -117,18 +117,19 @@ pub const CountdownTimer = struct {
     }
 };
 
-/// Returns current monotonic timestamp from awake clock.
+/// Returns current timestamp from the awake monotonic clock.
 fn nowTimestamp(io: std.Io) std.Io.Timestamp {
     return std.Io.Timestamp.now(io, .awake);
 }
 
-/// Computes elapsed nanoseconds and clamps negative/overflow cases.
+/// Computes elapsed nanoseconds and clamps negative or overflow cases.
 fn elapsedSince(start: std.Io.Timestamp, end: std.Io.Timestamp) u64 {
     const diff_ns = start.durationTo(end).toNanoseconds();
     if (diff_ns <= 0) return 0;
     return std.math.cast(u64, diff_ns) orelse std.math.maxInt(u64);
 }
 
+/// Returns debug IO context used by timer unit tests.
 fn testIo() std.Io {
     return std.Options.debug_io;
 }

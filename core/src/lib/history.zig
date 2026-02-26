@@ -1,4 +1,7 @@
-//! Timer duration history storage and selection helpers.
+//! Timer history storage and selection helpers.
+//!
+//! This module persists recent durations, keeps recency ordering, and supports deletion by label.
+
 const std = @import("std");
 const Io = std.Io;
 const Dir = std.Io.Dir;
@@ -29,6 +32,7 @@ pub const SelectionResult = union(enum) {
     invalid,
 };
 
+/// Resolves history.json path using XDG_STATE_HOME first, then HOME fallback.
 pub fn resolveHistoryPath(
     allocator: std.mem.Allocator,
     environ_map: *const std.process.Environ.Map,
@@ -53,6 +57,7 @@ pub fn resolveHistoryPath(
     );
 }
 
+/// Loads and validates history entries from disk into owned memory.
 pub fn loadEntries(allocator: std.mem.Allocator, io: Io, path: []const u8) StorageError![]Entry {
     const content = Dir.cwd().readFileAlloc(io, path, allocator, .limited(64 * 1024)) catch |err| switch (err) {
         error.FileNotFound => return allocator.alloc(Entry, 0),
@@ -101,6 +106,7 @@ pub fn loadEntries(allocator: std.mem.Allocator, io: Io, path: []const u8) Stora
     return list.toOwnedSlice(allocator);
 }
 
+/// Persists history entries to disk, creating parent directories when needed.
 pub fn saveEntries(
     allocator: std.mem.Allocator,
     io: Io,
@@ -120,6 +126,7 @@ pub fn saveEntries(
     });
 }
 
+/// Records a used duration, updates recency, and enforces max history size.
 pub fn recordDuration(
     allocator: std.mem.Allocator,
     io: Io,
@@ -161,6 +168,7 @@ pub fn recordDuration(
     try saveEntries(allocator, io, path, normalized);
 }
 
+/// Parses numeric selection input and maps it to choose/cancel/invalid.
 pub fn selectionFromInput(input: []const u8, max_items: usize) SelectionResult {
     const trimmed = std.mem.trim(u8, input, " \t\r\n");
     if (trimmed.len == 0) return .canceled;
@@ -173,10 +181,12 @@ pub fn selectionFromInput(input: []const u8, max_items: usize) SelectionResult {
     return .{ .chosen = parsed - 1 };
 }
 
+/// Returns current real Unix timestamp in seconds.
 pub fn nowUnixSeconds(io: Io) i64 {
     return std.Io.Timestamp.now(io, .real).toSeconds();
 }
 
+/// Sorts entries by most recently used timestamp in descending order.
 fn sortByLastUsedDesc(entries: []Entry) void {
     if (entries.len < 2) return;
 
@@ -193,6 +203,7 @@ fn sortByLastUsedDesc(entries: []Entry) void {
     }
 }
 
+/// Builds a new entry list excluding labels selected for deletion.
 pub fn deleteEntriesByLabels(
     allocator: std.mem.Allocator,
     entries: []const Entry,
@@ -217,6 +228,7 @@ pub fn deleteEntriesByLabels(
     return filtered.toOwnedSlice(allocator);
 }
 
+/// Formats duration as `MM:SS (Ns)` for history menus and matching.
 fn formatDurationLabel(allocator: std.mem.Allocator, duration_seconds: u32) std.mem.Allocator.Error![]u8 {
     const minutes = duration_seconds / 60;
     const seconds = duration_seconds % 60;
