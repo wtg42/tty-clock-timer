@@ -5,6 +5,11 @@
 //! - `--seconds <num>` / `-s <num>`
 //! - `--help` / `-h`
 const std = @import("std");
+const Io = std.Io;
+const Dir = std.Io.Dir;
+
+const CONFIG_DIR_NAME = "tty-clock-timer";
+const CONFIG_FILE_NAME = "config.json";
 
 /// Parsed CLI configuration.
 pub const Config = struct {
@@ -19,7 +24,25 @@ pub const Command = enum {
     start,
     list,
     list_delete,
+    setup_sound,
 };
+
+pub const SoundConfig = struct {
+    player: []const u8,
+    file: []const u8,
+};
+
+pub const UserConfig = struct {
+    sound: ?SoundConfig = null,
+};
+
+pub const PathError = error{MissingHome} || std.mem.Allocator.Error;
+
+pub const StorageError =
+    Dir.ReadFileAllocError ||
+    Dir.WriteFileError ||
+    Dir.CreateDirPathError ||
+    std.mem.Allocator.Error;
 
 /// CLI parse errors surfaced to main.
 pub const ParseError = error{
@@ -36,6 +59,144 @@ pub const ParseError = error{
     /// Allocation failure when collecting argv.
     OutOfMemory,
 };
+
+pub fn resolveConfigPath(
+    allocator: std.mem.Allocator,
+    environ_map: *const std.process.Environ.Map,
+) PathError![]u8 {
+    if (environ_map.get("XDG_CONFIG_HOME")) |xdg_config_home| {
+        if (xdg_config_home.len > 0) {
+            return std.fmt.allocPrint(
+                allocator,
+                "{s}/{s}/{s}",
+                .{ xdg_config_home, CONFIG_DIR_NAME, CONFIG_FILE_NAME },
+            );
+        }
+    }
+
+    const home = environ_map.get("HOME") orelse return error.MissingHome;
+    if (home.len == 0) return error.MissingHome;
+
+    return std.fmt.allocPrint(
+        allocator,
+        "{s}/.config/{s}/{s}",
+        .{ home, CONFIG_DIR_NAME, CONFIG_FILE_NAME },
+    );
+}
+
+pub fn freeUserConfig(allocator: std.mem.Allocator, config: UserConfig) void {
+    if (config.sound) |sound| {
+        allocator.free(sound.player);
+        allocator.free(sound.file);
+    }
+}
+
+pub fn readConfig(
+    allocator: std.mem.Allocator,
+    io: Io,
+    environ_map: *const std.process.Environ.Map,
+) StorageError!UserConfig {
+    const config_path = resolveConfigPath(allocator, environ_map) catch {
+        return .{};
+    };
+    defer allocator.free(config_path);
+
+    const content = Dir.cwd().readFileAlloc(io, config_path, allocator, .limited(64 * 1024)) catch |err| switch (err) {
+        error.FileNotFound => return .{},
+        else => |e| return e,
+    };
+    defer allocator.free(content);
+
+    if (content.len == 0) return .{};
+
+    var parsed = std.json.parseFromSlice(std.json.Value, allocator, content, .{}) catch {
+        return .{};
+    };
+    defer parsed.deinit();
+
+    if (parsed.value != .object) return .{};
+    const sound_value = parsed.value.object.get("sound") orelse return .{};
+    if (sound_value != .object) return .{};
+
+    const player_value = sound_value.object.get("player") orelse return .{};
+    const file_value = sound_value.object.get("file") orelse return .{};
+
+    const player = switch (player_value) {
+        .string => |value| value,
+        else => return .{},
+    };
+
+    const file = switch (file_value) {
+        .string => |value| value,
+        else => return .{},
+    };
+
+    return .{
+        .sound = .{
+            .player = try allocator.dupe(u8, player),
+            .file = try allocator.dupe(u8, file),
+        },
+    };
+}
+
+pub fn writeConfig(
+    allocator: std.mem.Allocator,
+    io: Io,
+    environ_map: *const std.process.Environ.Map,
+    patch: UserConfig,
+) StorageError!void {
+    const config_path = resolveConfigPath(allocator, environ_map) catch {
+        return;
+    };
+    defer allocator.free(config_path);
+
+    const parent = std.fs.path.dirname(config_path) orelse return;
+    try Dir.cwd().createDirPath(io, parent);
+
+    const existing_content = Dir.cwd().readFileAlloc(io, config_path, allocator, .limited(64 * 1024)) catch |err| switch (err) {
+        error.FileNotFound => null,
+        else => |e| return e,
+    };
+    defer if (existing_content) |content| allocator.free(content);
+
+    const encoded = blk: {
+        if (existing_content) |content| {
+            var parsed = std.json.parseFromSlice(std.json.Value, allocator, content, .{}) catch null;
+            if (parsed) |*parsed_value| {
+                defer parsed_value.deinit();
+                var inserted_sound = false;
+                if (parsed_value.value == .object and patch.sound != null) {
+                    const sound = patch.sound.?;
+                    var sound_obj = std.json.Value{ .object = .init(allocator) };
+                    try sound_obj.object.put("player", .{ .string = sound.player });
+                    try sound_obj.object.put("file", .{ .string = sound.file });
+                    try parsed_value.value.object.put("sound", sound_obj);
+                    inserted_sound = true;
+                }
+                if (parsed_value.value == .object) {
+                    const encoded_existing = try std.json.Stringify.valueAlloc(allocator, parsed_value.value, .{});
+                    if (inserted_sound) {
+                        if (parsed_value.value.object.getPtr("sound")) |sound_ptr| {
+                            if (sound_ptr.* == .object) {
+                                sound_ptr.object.deinit();
+                            }
+                        }
+                    }
+                    break :blk encoded_existing;
+                }
+            }
+        }
+
+        const payload = UserConfig{ .sound = patch.sound };
+        break :blk try std.json.Stringify.valueAlloc(allocator, payload, .{});
+    };
+    defer allocator.free(encoded);
+
+    try Dir.cwd().writeFile(io, .{
+        .sub_path = config_path,
+        .data = encoded,
+    });
+}
 
 /// Parses args from global process argv (kept for compatibility/testing).
 pub fn parseArgs2(allocator: std.mem.Allocator) !Config {
@@ -95,6 +256,11 @@ pub fn parseArgsFromSlice(args: []const []const u8) !Config {
         return ParseError.UnknownArgument;
     }
 
+    if (isSetupSoundArg(first_arg) and args.len == 1) {
+        config.command = .setup_sound;
+        return config;
+    }
+
     // Step C: Parse minutes and normalize to seconds.
     if (isMinutesArg(first_arg)) {
         if (args.len < 2) {
@@ -148,6 +314,10 @@ fn isListArg(arg: []const u8) bool {
 /// Returns true when `arg` is delete flag.
 fn isDeleteArg(arg: []const u8) bool {
     return std.mem.eql(u8, arg, "--delete");
+}
+
+fn isSetupSoundArg(arg: []const u8) bool {
+    return std.mem.eql(u8, arg, "--setup-sound");
 }
 
 test "parseArgsFromSlice - valid minutes" {
@@ -227,6 +397,14 @@ test "parseArgsFromSlice - list delete subcommand" {
     try std.testing.expectEqual(false, config.show_help);
 }
 
+test "parseArgsFromSlice - setup sound" {
+    const args = &[_][]const u8{"--setup-sound"};
+    const config = try parseArgsFromSlice(args);
+    try std.testing.expectEqual(Command.setup_sound, config.command);
+    try std.testing.expectEqual(@as(u32, 0), config.duration_seconds);
+    try std.testing.expectEqual(false, config.show_help);
+}
+
 test "parseArgsFromSlice - list alone still works" {
     const args = &[_][]const u8{"list"};
     const config = try parseArgsFromSlice(args);
@@ -265,4 +443,79 @@ test "parseArgsFromSlice - minutes overflow" {
     const minutes_str = std.fmt.comptimePrint("{d}", .{minutes_overflow});
     const args = &[_][]const u8{ "--minutes", minutes_str };
     try std.testing.expectError(ParseError.Overflow, parseArgsFromSlice(args));
+}
+
+test "config/resolveConfigPath - prefers XDG_CONFIG_HOME" {
+    const allocator = std.testing.allocator;
+    var environ_map = std.process.Environ.Map.init(allocator);
+    defer environ_map.deinit();
+
+    try environ_map.put("XDG_CONFIG_HOME", "/tmp/xdg-config");
+    try environ_map.put("HOME", "/tmp/home");
+
+    const path = try resolveConfigPath(allocator, &environ_map);
+    defer allocator.free(path);
+
+    try std.testing.expectEqualStrings(
+        "/tmp/xdg-config/tty-clock-timer/config.json",
+        path,
+    );
+}
+
+test "config/readConfig - invalid json returns empty config" {
+    const allocator = std.testing.allocator;
+    const io = std.testing.io;
+
+    const config_dir = ".zig-test-config-invalid";
+    const config_path = ".zig-test-config-invalid/tty-clock-timer/config.json";
+    Dir.cwd().deleteTree(io, config_dir) catch {};
+    defer Dir.cwd().deleteTree(io, config_dir) catch {};
+
+    try Dir.cwd().createDirPath(io, ".zig-test-config-invalid/tty-clock-timer");
+    try Dir.cwd().writeFile(io, .{
+        .sub_path = config_path,
+        .data = "{",
+    });
+
+    var environ_map = std.process.Environ.Map.init(allocator);
+    defer environ_map.deinit();
+    try environ_map.put("XDG_CONFIG_HOME", ".zig-test-config-invalid");
+
+    const config = try readConfig(allocator, io, &environ_map);
+    defer freeUserConfig(allocator, config);
+    try std.testing.expect(config.sound == null);
+}
+
+test "config/writeConfig - merges and creates directory" {
+    const allocator = std.testing.allocator;
+    const io = std.testing.io;
+
+    const config_dir = ".zig-test-config-write";
+    const config_path = ".zig-test-config-write/tty-clock-timer/config.json";
+    Dir.cwd().deleteTree(io, config_dir) catch {};
+    defer Dir.cwd().deleteTree(io, config_dir) catch {};
+
+    try Dir.cwd().createDirPath(io, ".zig-test-config-write/tty-clock-timer");
+    try Dir.cwd().writeFile(io, .{
+        .sub_path = config_path,
+        .data = "{\"theme\":\"light\"}",
+    });
+
+    var environ_map = std.process.Environ.Map.init(allocator);
+    defer environ_map.deinit();
+    try environ_map.put("XDG_CONFIG_HOME", ".zig-test-config-write");
+
+    try writeConfig(allocator, io, &environ_map, .{
+        .sound = .{
+            .player = "/usr/bin/paplay",
+            .file = "/tmp/ding.wav",
+        },
+    });
+
+    const content = try Dir.cwd().readFileAlloc(io, config_path, allocator, .limited(64 * 1024));
+    defer allocator.free(content);
+    try std.testing.expect(std.mem.indexOf(u8, content, "\"theme\":\"light\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, content, "\"sound\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, content, "\"player\":\"/usr/bin/paplay\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, content, "\"file\":\"/tmp/ding.wav\"") != null);
 }

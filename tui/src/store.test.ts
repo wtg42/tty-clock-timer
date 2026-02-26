@@ -15,6 +15,24 @@ describe("store/createTimerStore", () => {
       etaHhmm: null,
       isFinished: false,
       shouldExit: false,
+      sound: null,
+    });
+  });
+
+  test("createTimerStore - init event stores sound config", () => {
+    const store = createTimerStore();
+
+    store.applyEvent({
+      type: "init",
+      sound: {
+        player: "/usr/bin/paplay",
+        file: "/tmp/ding.wav",
+      },
+    });
+
+    expect(store.getState().sound).toEqual({
+      player: "/usr/bin/paplay",
+      file: "/tmp/ding.wav",
     });
   });
 
@@ -35,6 +53,7 @@ describe("store/createTimerStore", () => {
       etaHhmm: "14:35",
       isFinished: false,
       shouldExit: false,
+      sound: null,
     });
   });
 
@@ -52,6 +71,7 @@ describe("store/createTimerStore", () => {
       etaHhmm: null,
       isFinished: true,
       shouldExit: false,
+      sound: null,
     });
   });
 

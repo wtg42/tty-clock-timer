@@ -13,6 +13,7 @@ import { createEffect, createSignal, onCleanup, onMount } from "solid-js";
 
 import { createCommandPlane } from "./command_plane.ts";
 import { type CommandName, type CommandResponse } from "./protocol.ts";
+import { playSound } from "./sound.ts";
 import { createTimerStore } from "./store.ts";
 import {
   commandFromKey,
@@ -234,7 +235,16 @@ const App = () => {
   });
 
   const unsubscribeStore = store.subscribe((nextState) => setState(nextState));
-  const unsubscribeEvents = adapter.onEvent((event) => store.applyEvent(event));
+  const unsubscribeEvents = adapter.onEvent((event) => {
+    store.applyEvent(event);
+
+    if (event.type === "timer_finished") {
+      const sound = store.getState().sound;
+      if (sound) {
+        playSound(sound.player, sound.file);
+      }
+    }
+  });
   onCleanup(() => {
     unsubscribeStore();
     unsubscribeEvents();

@@ -6,7 +6,21 @@
  */
 export type CommandName = "pause" | "resume" | "reset" | "quit";
 
-export type CoreEvent = TimerUpdateMessage | TimerFinishedMessage | ExitMessage;
+export type SoundConfig = {
+  player: string;
+  file: string;
+};
+
+export type CoreEvent =
+  | InitMessage
+  | TimerUpdateMessage
+  | TimerFinishedMessage
+  | ExitMessage;
+
+export type InitMessage = {
+  type: "init";
+  sound: SoundConfig | null;
+};
 
 export type TimerUpdateMessage = {
   type: "update_timer";
@@ -48,6 +62,13 @@ export type CommandResponse =
 export const isCoreEvent = (value: unknown): value is CoreEvent => {
   if (!value || typeof value !== "object") return false;
   const record = value as Record<string, unknown>;
+
+  if (record.type === "init") {
+    if (record.sound === null) return true;
+    if (!record.sound || typeof record.sound !== "object") return false;
+    const sound = record.sound as Record<string, unknown>;
+    return typeof sound.player === "string" && typeof sound.file === "string";
+  }
 
   if (record.type === "update_timer") {
     return (

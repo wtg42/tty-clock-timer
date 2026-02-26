@@ -6,6 +6,18 @@ import { describe, expect, test } from "bun:test";
 import { isCommandResultMessage, isCoreEvent } from "./protocol.ts";
 
 describe("protocol/isCoreEvent", () => {
+  test("isCoreEvent - normal init payload with sound", () => {
+    expect(
+      isCoreEvent({
+        type: "init",
+        sound: {
+          player: "/usr/bin/paplay",
+          file: "/tmp/ding.wav",
+        },
+      }),
+    ).toBe(true);
+  });
+
   test("isCoreEvent - normal update_timer payload", () => {
     expect(
       isCoreEvent({

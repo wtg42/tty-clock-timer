@@ -32,6 +32,12 @@ const GumMultiSelection = union(enum) {
     failed,
 };
 
+const GumTextResult = union(enum) {
+    chosen: []u8,
+    canceled,
+    failed,
+};
+
 const UiRuntimeContract = struct {
     cwd: []const u8,
     entry: []const u8,
@@ -59,6 +65,7 @@ fn helpMessage() []const u8 {
         "Options:\n" ++
         "  -m, --minutes <num>    Set countdown minutes\n" ++
         "  -s, --seconds <num>    Set countdown seconds\n" ++
+        "      --setup-sound      Configure sound player + file\n" ++
         "      list               Select from history durations\n" ++
         "      list --delete      Delete history durations\n" ++
         "  -h, --help             Show this help message\n" ++
@@ -66,6 +73,7 @@ fn helpMessage() []const u8 {
         "Example:\n" ++
         "  tic --minutes 25\n" ++
         "  tic -s 90\n" ++
+        "  tic --setup-sound\n" ++
         "  tic list\n" ++
         "  tic list --delete\n";
 }
@@ -538,6 +546,269 @@ fn deleteWithGum(
     if (selected_labels.items.len == 0) return .canceled;
 
     return .{ .chosen = try selected_labels.toOwnedSlice(allocator) };
+}
+
+fn gumChooseText(
+    allocator: std.mem.Allocator,
+    io: Io,
+    environ_map: *const std.process.Environ.Map,
+    stderr_writer: *Io.Writer,
+    header: []const u8,
+    options: []const []const u8,
+) !GumTextResult {
+    if (!std.process.can_spawn) return .failed;
+
+    var argv_owned: std.ArrayList([]u8) = .empty;
+    defer {
+        for (argv_owned.items) |value| allocator.free(value);
+        argv_owned.deinit(allocator);
+    }
+
+    var argv_list: std.ArrayList([]const u8) = .empty;
+    defer argv_list.deinit(allocator);
+
+    const gum_binary = findBundledGum(io, environ_map) orelse "gum";
+    try appendArgOwned(allocator, &argv_list, &argv_owned, gum_binary);
+    try appendArgOwned(allocator, &argv_list, &argv_owned, "choose");
+    try appendArgOwned(allocator, &argv_list, &argv_owned, "--header");
+    try appendArgOwned(allocator, &argv_list, &argv_owned, header);
+    for (options) |option| {
+        try appendArgOwned(allocator, &argv_list, &argv_owned, option);
+    }
+
+    var child = std.process.spawn(io, .{
+        .argv = argv_list.items,
+        .stdin = .inherit,
+        .stdout = .pipe,
+        .stderr = .inherit,
+    }) catch |err| {
+        if (gumDebugEnabled(environ_map)) {
+            stderr_writer.print("Debug: gum spawn failed ({s})\n", .{@errorName(err)}) catch {};
+            stderr_writer.flush() catch {};
+        }
+        return .failed;
+    };
+    defer child.kill(io);
+
+    var gum_stdout_buffer: [1024]u8 = undefined;
+    var gum_stdout_reader = child.stdout.?.readerStreaming(io, &gum_stdout_buffer);
+    const gum_stdout = gum_stdout_reader.interface.allocRemaining(allocator, .limited(4096)) catch {
+        return .failed;
+    };
+    defer allocator.free(gum_stdout);
+
+    const term = child.wait(io) catch return .failed;
+    switch (term) {
+        .exited => |code| {
+            if (code != 0) {
+                if (code == 130) return .canceled;
+                const trimmed_stdout = std.mem.trim(u8, gum_stdout, " \t\r\n");
+                if (code == 1 and trimmed_stdout.len == 0) return .canceled;
+                return .failed;
+            }
+        },
+        .signal => |signal| {
+            if (signal == std.posix.SIG.INT) return .canceled;
+            return .failed;
+        },
+        else => return .failed,
+    }
+
+    const selected = std.mem.trim(u8, gum_stdout, " \t\r\n");
+    if (selected.len == 0) return .canceled;
+    return .{ .chosen = try allocator.dupe(u8, selected) };
+}
+
+fn gumInputText(
+    allocator: std.mem.Allocator,
+    io: Io,
+    environ_map: *const std.process.Environ.Map,
+    stderr_writer: *Io.Writer,
+    placeholder: []const u8,
+) !GumTextResult {
+    if (!std.process.can_spawn) return .failed;
+
+    var argv_owned: std.ArrayList([]u8) = .empty;
+    defer {
+        for (argv_owned.items) |value| allocator.free(value);
+        argv_owned.deinit(allocator);
+    }
+
+    var argv_list: std.ArrayList([]const u8) = .empty;
+    defer argv_list.deinit(allocator);
+
+    const gum_binary = findBundledGum(io, environ_map) orelse "gum";
+    try appendArgOwned(allocator, &argv_list, &argv_owned, gum_binary);
+    try appendArgOwned(allocator, &argv_list, &argv_owned, "input");
+    try appendArgOwned(allocator, &argv_list, &argv_owned, "--placeholder");
+    try appendArgOwned(allocator, &argv_list, &argv_owned, placeholder);
+
+    var child = std.process.spawn(io, .{
+        .argv = argv_list.items,
+        .stdin = .inherit,
+        .stdout = .pipe,
+        .stderr = .inherit,
+    }) catch |err| {
+        if (gumDebugEnabled(environ_map)) {
+            stderr_writer.print("Debug: gum spawn failed ({s})\n", .{@errorName(err)}) catch {};
+            stderr_writer.flush() catch {};
+        }
+        return .failed;
+    };
+    defer child.kill(io);
+
+    var gum_stdout_buffer: [2048]u8 = undefined;
+    var gum_stdout_reader = child.stdout.?.readerStreaming(io, &gum_stdout_buffer);
+    const gum_stdout = gum_stdout_reader.interface.allocRemaining(allocator, .limited(8192)) catch {
+        return .failed;
+    };
+    defer allocator.free(gum_stdout);
+
+    const term = child.wait(io) catch return .failed;
+    switch (term) {
+        .exited => |code| {
+            if (code != 0) {
+                if (code == 130) return .canceled;
+                const trimmed_stdout = std.mem.trim(u8, gum_stdout, " \t\r\n");
+                if (code == 1 and trimmed_stdout.len == 0) return .canceled;
+                return .failed;
+            }
+        },
+        .signal => |signal| {
+            if (signal == std.posix.SIG.INT) return .canceled;
+            return .failed;
+        },
+        else => return .failed,
+    }
+
+    const value = std.mem.trim(u8, gum_stdout, " \t\r\n");
+    if (value.len == 0) return .canceled;
+    return .{ .chosen = try allocator.dupe(u8, value) };
+}
+
+fn detectPlayerPath(
+    allocator: std.mem.Allocator,
+    io: Io,
+    name: []const u8,
+) !?[]u8 {
+    if (!std.process.can_spawn) return null;
+
+    const argv = &[_][]const u8{ "which", name };
+    var child = std.process.spawn(io, .{
+        .argv = argv,
+        .stdin = .ignore,
+        .stdout = .pipe,
+        .stderr = .ignore,
+    }) catch {
+        return null;
+    };
+    defer child.kill(io);
+
+    var stdout_buffer: [1024]u8 = undefined;
+    var stdout_reader = child.stdout.?.readerStreaming(io, &stdout_buffer);
+    const output = stdout_reader.interface.allocRemaining(allocator, .limited(4096)) catch {
+        return null;
+    };
+    defer allocator.free(output);
+
+    const term = child.wait(io) catch return null;
+    switch (term) {
+        .exited => |code| if (code != 0) return null,
+        else => return null,
+    }
+
+    const path = std.mem.trim(u8, output, " \t\r\n");
+    if (path.len == 0) return null;
+    var line_iter = std.mem.splitScalar(u8, path, '\n');
+    const first_line = line_iter.first();
+    return try allocator.dupe(u8, first_line);
+}
+
+fn runSetupSound(
+    allocator: std.mem.Allocator,
+    io: Io,
+    stdout_writer: *Io.Writer,
+    stderr_writer: *Io.Writer,
+    environ_map: *const std.process.Environ.Map,
+) !void {
+    const candidate_names = [_][]const u8{ "paplay", "pw-play", "aplay", "mpg123", "ffplay" };
+
+    var detected_players: std.ArrayList([]u8) = .empty;
+    defer {
+        for (detected_players.items) |player| allocator.free(player);
+        detected_players.deinit(allocator);
+    }
+
+    for (candidate_names) |candidate| {
+        const maybe_path = try detectPlayerPath(allocator, io, candidate);
+        if (maybe_path) |path| {
+            try detected_players.append(allocator, path);
+        }
+    }
+
+    var selected_player: ?[]u8 = null;
+    defer if (selected_player) |value| allocator.free(value);
+
+    if (detected_players.items.len > 0) {
+        var options: std.ArrayList([]const u8) = .empty;
+        defer options.deinit(allocator);
+        for (detected_players.items) |item| {
+            try options.append(allocator, item);
+        }
+
+        switch (try gumChooseText(
+            allocator,
+            io,
+            environ_map,
+            stderr_writer,
+            "Select a sound player",
+            options.items,
+        )) {
+            .chosen => |value| selected_player = value,
+            .canceled => return error.UserCanceled,
+            .failed => return error.GumFailed,
+        }
+    } else {
+        try stdout_writer.print("No known player found. Enter full player path.\n", .{});
+        try stdout_writer.flush();
+
+        switch (try gumInputText(
+            allocator,
+            io,
+            environ_map,
+            stderr_writer,
+            "/usr/bin/paplay",
+        )) {
+            .chosen => |value| selected_player = value,
+            .canceled => return error.UserCanceled,
+            .failed => return error.GumFailed,
+        }
+    }
+
+    const player = selected_player orelse return error.GumFailed;
+
+    const selected_file = switch (try gumInputText(
+        allocator,
+        io,
+        environ_map,
+        stderr_writer,
+        "/path/to/sound.wav",
+    )) {
+        .chosen => |value| value,
+        .canceled => return error.UserCanceled,
+        .failed => return error.GumFailed,
+    };
+    defer allocator.free(selected_file);
+
+    try conf.writeConfig(allocator, io, environ_map, .{
+        .sound = .{
+            .player = player,
+            .file = selected_file,
+        },
+    });
+
+    try stdout_writer.print("Sound setup saved.\n", .{});
+    try stdout_writer.flush();
 }
 
 fn chooseWithFallback(
@@ -1278,6 +1549,33 @@ pub fn main(init: std.process.Init) !void {
         return;
     }
 
+    if (config.command == .setup_sound) {
+        runSetupSound(
+            allocator,
+            io,
+            stdout_writer,
+            stderr_writer,
+            init.environ_map,
+        ) catch |err| switch (err) {
+            error.UserCanceled => {
+                try stderr_writer.print("Sound setup canceled.\n", .{});
+                try stderr_writer.flush();
+                std.process.exit(1);
+            },
+            error.GumFailed => {
+                try stderr_writer.print("Error: gum interaction failed\n", .{});
+                try stderr_writer.flush();
+                std.process.exit(1);
+            },
+            else => {
+                try stderr_writer.print("Error: Failed to setup sound ({s})\n", .{@errorName(err)});
+                try stderr_writer.flush();
+                std.process.exit(1);
+            },
+        };
+        return;
+    }
+
     if (config.command == .list_delete) {
         try resolveDeletionFromHistory(
             allocator,
@@ -1299,7 +1597,11 @@ pub fn main(init: std.process.Init) !void {
             init.environ_map,
         )) orelse return,
         .list_delete => unreachable,
+        .setup_sound => unreachable,
     };
+
+    const user_config = conf.readConfig(allocator, io, init.environ_map) catch conf.UserConfig{};
+    defer conf.freeUserConfig(allocator, user_config);
     const total_duration_ns = @as(u64, total_duration_seconds) * std.time.ns_per_s;
 
     // Step 4: Configure stdin into raw mode for timer runtime.
@@ -1444,6 +1746,26 @@ pub fn main(init: std.process.Init) !void {
         socket_writer = accepted.writer(io, &socket_writer_buffer);
         socket_stream = accepted;
 
+        const init_sound: ?ipc.SoundConfig = if (user_config.sound) |sound| .{
+            .player = sound.player,
+            .file = sound.file,
+        } else null;
+
+        ipc.sendInit(
+            allocator,
+            &socket_writer.interface,
+            init_sound,
+        ) catch |err| {
+            try stderr_writer.print("Error: Failed to send init event ({s})\n", .{@errorName(err)});
+            try stderr_writer.flush();
+            std.process.exit(1);
+        };
+        socket_writer.interface.flush() catch |err| {
+            try stderr_writer.print("Error: Failed to flush init event ({s})\n", .{@errorName(err)});
+            try stderr_writer.flush();
+            std.process.exit(1);
+        };
+
         sendTimerProjection(
             allocator,
             io,
@@ -1516,7 +1838,7 @@ test "configErrorMessage - mapping" {
 
 test "helpMessage - stable output" {
     try std.testing.expectEqualStrings(
-        "Usage: tic [OPTIONS]\n\nOptions:\n  -m, --minutes <num>    Set countdown minutes\n  -s, --seconds <num>    Set countdown seconds\n      list               Select from history durations\n      list --delete      Delete history durations\n  -h, --help             Show this help message\n\nExample:\n  tic --minutes 25\n  tic -s 90\n  tic list\n  tic list --delete\n",
+        "Usage: tic [OPTIONS]\n\nOptions:\n  -m, --minutes <num>    Set countdown minutes\n  -s, --seconds <num>    Set countdown seconds\n      --setup-sound      Configure sound player + file\n      list               Select from history durations\n      list --delete      Delete history durations\n  -h, --help             Show this help message\n\nExample:\n  tic --minutes 25\n  tic -s 90\n  tic --setup-sound\n  tic list\n  tic list --delete\n",
         helpMessage(),
     );
 }

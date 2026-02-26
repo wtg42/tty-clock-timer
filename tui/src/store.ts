@@ -5,6 +5,7 @@
  * by the UI layer, and provides a simple subscribe API.
  */
 import type { CoreEvent } from "./protocol.ts";
+import type { SoundConfig } from "./protocol.ts";
 
 export type TimerViewState = {
   remainingSeconds: number | null;
@@ -12,6 +13,7 @@ export type TimerViewState = {
   etaHhmm: string | null;
   isFinished: boolean;
   shouldExit: boolean;
+  sound: SoundConfig | null;
 };
 
 const initialState: TimerViewState = {
@@ -20,6 +22,7 @@ const initialState: TimerViewState = {
   etaHhmm: null,
   isFinished: false,
   shouldExit: false,
+  sound: null,
 };
 
 /**
@@ -45,6 +48,12 @@ export const createTimerStore = () => {
 
     applyEvent: (event: CoreEvent) => {
       switch (event.type) {
+        case "init":
+          state = {
+            ...state,
+            sound: event.sound,
+          };
+          break;
         case "update_timer":
           state = {
             ...state,

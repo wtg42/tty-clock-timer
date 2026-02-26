@@ -14,12 +14,18 @@ const Io = std.Io;
 /// - command: Control command sent from external process (pause, resume, reset, quit)
 /// - command_result: Response to a command indicating success or failure
 pub const MessageType = enum {
+    init,
     update_timer,
     timer_finished,
     exit,
     keyboard_input,
     command,
     command_result,
+};
+
+pub const SoundConfig = struct {
+    player: []const u8,
+    file: []const u8,
 };
 
 /// Control commands that can be sent to the timer.
@@ -54,6 +60,9 @@ pub const Command = enum {
 /// Used for bidirectional communication between Core and TUI/external processes.
 /// All messages are serialized to JSON with a "type" field matching the active union tag.
 pub const Message = union(MessageType) {
+    init: struct {
+        sound: ?SoundConfig,
+    },
     /// Timer state update sent periodically (~1 second intervals).
     /// Fields: current remaining time, initial duration, status, and ETA (`HH:MM`).
     update_timer: struct {
@@ -94,6 +103,10 @@ pub const Message = union(MessageType) {
 
         // Serialize payload fields based on message variant
         switch (self) {
+            .init => |payload| {
+                try jws.objectField("sound");
+                try jws.write(payload.sound);
+            },
             .update_timer => |payload| {
                 try jws.objectField("remaining_seconds");
                 try jws.write(payload.remaining_seconds);
@@ -153,6 +166,12 @@ pub fn freeMessage(allocator: std.mem.Allocator, message: Message) void {
         .update_timer => |payload| {
             allocator.free(payload.status);
             allocator.free(payload.eta_hhmm);
+        },
+        .init => |payload| {
+            if (payload.sound) |sound| {
+                allocator.free(sound.player);
+                allocator.free(sound.file);
+            }
         },
         .keyboard_input => |payload| allocator.free(payload.key),
         .command => |payload| {
@@ -222,6 +241,35 @@ pub fn parseMessage(allocator: std.mem.Allocator, json: []const u8) !Message {
             .status = try allocator.dupe(u8, status_str),
             .eta_hhmm = try allocator.dupe(u8, eta_str),
         } };
+    }
+
+    if (std.mem.eql(u8, type_str, "init")) {
+        const sound_value = obj.get("sound") orelse return error.MissingField;
+
+        const sound: ?SoundConfig = switch (sound_value) {
+            .null => null,
+            .object => |sound_obj| blk: {
+                const player_value = sound_obj.get("player") orelse return error.MissingField;
+                const file_value = sound_obj.get("file") orelse return error.MissingField;
+
+                const player = switch (player_value) {
+                    .string => |value| value,
+                    else => return error.InvalidFieldType,
+                };
+                const file = switch (file_value) {
+                    .string => |value| value,
+                    else => return error.InvalidFieldType,
+                };
+
+                break :blk .{
+                    .player = try allocator.dupe(u8, player),
+                    .file = try allocator.dupe(u8, file),
+                };
+            },
+            else => return error.InvalidFieldType,
+        };
+
+        return Message{ .init = .{ .sound = sound } };
     }
 
     if (std.mem.eql(u8, type_str, "timer_finished")) {
@@ -324,6 +372,14 @@ pub fn updateTimer(
     } });
 }
 
+pub fn sendInit(
+    allocator: std.mem.Allocator,
+    writer: *Io.Writer,
+    sound: ?SoundConfig,
+) !void {
+    try sendMessage(allocator, writer, Message{ .init = .{ .sound = sound } });
+}
+
 /// Sends `timer_finished` message when countdown reaches zero.
 /// Signals to TUI that the timer has completed.
 pub fn notifyTimerFinished(allocator: std.mem.Allocator, writer: *Io.Writer, total_duration: u32) !void {
@@ -366,7 +422,7 @@ test "ipc/parseMessage - command roundtrip" {
     const message = try parseMessage(allocator, json);
     defer freeMessage(allocator, message);
 
-    try std.testing.expectEqual(message, .command);
+    try std.testing.expect(message == .command);
     try std.testing.expectEqualStrings("1", message.command.id);
     try std.testing.expectEqualStrings("pause", message.command.command);
 }
@@ -384,10 +440,25 @@ test "ipc/parseMessage - update_timer includes eta" {
     const message = try parseMessage(allocator, json);
     defer freeMessage(allocator, message);
 
-    try std.testing.expectEqual(message, .update_timer);
+    try std.testing.expect(message == .update_timer);
     try std.testing.expectEqual(@as(u32, 42), message.update_timer.remaining_seconds);
     try std.testing.expectEqualStrings("running", message.update_timer.status);
     try std.testing.expectEqualStrings("14:35", message.update_timer.eta_hhmm);
+}
+
+test "ipc/parseMessage - init with sound" {
+    const allocator = std.testing.allocator;
+    const json = "{\"type\":\"init\",\"sound\":{\"player\":\"/usr/bin/paplay\",\"file\":\"/tmp/ding.wav\"}}";
+    const message = try parseMessage(allocator, json);
+    defer freeMessage(allocator, message);
+
+    try std.testing.expect(message == .init);
+    const sound = message.init.sound orelse {
+        try std.testing.expect(false);
+        return;
+    };
+    try std.testing.expectEqualStrings("/usr/bin/paplay", sound.player);
+    try std.testing.expectEqualStrings("/tmp/ding.wav", sound.file);
 }
 
 test "ipc/parseMessage - update_timer missing eta" {
@@ -410,7 +481,7 @@ test "ipc/parseMessage - command_result with null error" {
     const message = try parseMessage(allocator, json);
     defer freeMessage(allocator, message);
 
-    try std.testing.expectEqual(message, .command_result);
+    try std.testing.expect(message == .command_result);
     try std.testing.expect(message.command_result.success);
     try std.testing.expect(message.command_result.@"error" == null);
 }
