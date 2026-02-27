@@ -14,6 +14,13 @@ bun test
 - `bun test`: runs unit tests under `src/**/*.test.ts`.
 - `tui/` currently has no standalone lint/type-check script (`tsconfig.json` is set to `noEmit`).
 
+## Dependency Management Policy
+
+- `tui/` is Bun-only for package management.
+- Use `bun install` to add or update dependencies.
+- `bun.lock` is the only lockfile allowed in `tui/`.
+- Do not run npm commands in `tui/` to avoid regenerating `package-lock.json`.
+
 ## End-to-End TUI Data Flow (`src/` Responsibilities)
 
 ```text
