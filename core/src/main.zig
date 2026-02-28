@@ -142,15 +142,6 @@ fn resolveEtaEpochSeconds(
     return computed;
 }
 
-/// Formats ETA epoch seconds into `HH:MM` for user-facing updates.
-fn formatEtaHhmm(buffer: *[5]u8, epoch_seconds: u64) []const u8 {
-    const day_seconds = (std.time.epoch.EpochSeconds{ .secs = epoch_seconds }).getDaySeconds();
-    return std.fmt.bufPrint(
-        buffer,
-        "{d:0>2}:{d:0>2}",
-        .{ day_seconds.getHoursIntoDay(), day_seconds.getMinutesIntoHour() },
-    ) catch unreachable;
-}
 
 /// Converts CLI parse errors into readable messages for terminal output.
 fn configErrorMessage(err: conf.ParseError) []const u8 {
@@ -1039,8 +1030,6 @@ fn sendTimerProjection(
         currentRealEpochSeconds(io),
         eta_projection,
     );
-    var eta_buffer: [5]u8 = undefined;
-    const eta_hhmm = formatEtaHhmm(&eta_buffer, eta_epoch_seconds);
 
     try ipc.updateTimer(
         allocator,
@@ -1048,7 +1037,7 @@ fn sendTimerProjection(
         remaining_seconds,
         total_duration_seconds,
         timerStateToStatus(timer.state),
-        eta_hhmm,
+        eta_epoch_seconds,
     );
     try writer.flush();
 }

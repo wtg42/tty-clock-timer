@@ -62,12 +62,12 @@ pub const Message = union(MessageType) {
         sound: ?SoundConfig,
     },
     /// Timer state update sent periodically (~1 second intervals).
-    /// Fields: current remaining time, initial duration, status, and ETA (`HH:MM`).
+    /// Fields: current remaining time, initial duration, status, and ETA (Unix timestamp in seconds).
     update_timer: struct {
         remaining_seconds: u32,
         total_duration: u32,
         status: []const u8,
-        eta_hhmm: []const u8,
+        eta_epoch_seconds: u64,
     },
     /// Timer countdown completed successfully.
     timer_finished: struct {
@@ -111,8 +111,8 @@ pub const Message = union(MessageType) {
                 try jws.write(payload.total_duration);
                 try jws.objectField("status");
                 try jws.write(payload.status);
-                try jws.objectField("eta_hhmm");
-                try jws.write(payload.eta_hhmm);
+                try jws.objectField("eta_epoch_seconds");
+                try jws.write(payload.eta_epoch_seconds);
             },
             .timer_finished => |payload| {
                 try jws.objectField("total_duration");
@@ -160,7 +160,6 @@ pub fn freeMessage(allocator: std.mem.Allocator, message: Message) void {
     switch (message) {
         .update_timer => |payload| {
             allocator.free(payload.status);
-            allocator.free(payload.eta_hhmm);
         },
         .init => |payload| {
             if (payload.sound) |sound| {
@@ -204,7 +203,7 @@ pub fn parseMessage(allocator: std.mem.Allocator, json: []const u8) !Message {
         const remaining_value = obj.get("remaining_seconds") orelse return error.MissingField;
         const total_value = obj.get("total_duration") orelse return error.MissingField;
         const status_value = obj.get("status") orelse return error.MissingField;
-        const eta_value = obj.get("eta_hhmm") orelse return error.MissingField;
+        const eta_value = obj.get("eta_epoch_seconds") orelse return error.MissingField;
 
         // Type-coerce to integers
         const remaining_int = switch (remaining_value) {
@@ -219,20 +218,21 @@ pub fn parseMessage(allocator: std.mem.Allocator, json: []const u8) !Message {
             .string => |value| value,
             else => return error.InvalidFieldType,
         };
-        const eta_str = switch (eta_value) {
-            .string => |value| value,
+        const eta_int = switch (eta_value) {
+            .integer => |value| value,
             else => return error.InvalidFieldType,
         };
 
         // Validate integers fit in u32 range
         if (remaining_int < 0 or remaining_int > std.math.maxInt(u32)) return error.InvalidFieldType;
         if (total_int < 0 or total_int > std.math.maxInt(u32)) return error.InvalidFieldType;
+        if (eta_int < 0 or eta_int > std.math.maxInt(u64)) return error.InvalidFieldType;
 
         return Message{ .update_timer = .{
             .remaining_seconds = @intCast(remaining_int),
             .total_duration = @intCast(total_int),
             .status = try allocator.dupe(u8, status_str),
-            .eta_hhmm = try allocator.dupe(u8, eta_str),
+            .eta_epoch_seconds = @intCast(eta_int),
         } };
     }
 
@@ -352,13 +352,13 @@ pub fn updateTimer(
     remaining_seconds: u32,
     total_duration: u32,
     status: []const u8,
-    eta_hhmm: []const u8,
+    eta_epoch_seconds: u64,
 ) !void {
     try sendMessage(allocator, writer, Message{ .update_timer = .{
         .remaining_seconds = remaining_seconds,
         .total_duration = total_duration,
         .status = status,
-        .eta_hhmm = eta_hhmm,
+        .eta_epoch_seconds = eta_epoch_seconds,
     } });
 }
 
@@ -421,7 +421,7 @@ test "ipc/parseMessage - update_timer includes eta" {
         "\"remaining_seconds\":42," ++
         "\"total_duration\":60," ++
         "\"status\":\"running\"," ++
-        "\"eta_hhmm\":\"14:35\"" ++
+        "\"eta_epoch_seconds\":52200" ++
         "}";
     const message = try parseMessage(allocator, json);
     defer freeMessage(allocator, message);
@@ -429,7 +429,7 @@ test "ipc/parseMessage - update_timer includes eta" {
     try std.testing.expect(message == .update_timer);
     try std.testing.expectEqual(@as(u32, 42), message.update_timer.remaining_seconds);
     try std.testing.expectEqualStrings("running", message.update_timer.status);
-    try std.testing.expectEqualStrings("14:35", message.update_timer.eta_hhmm);
+    try std.testing.expectEqual(@as(u64, 52200), message.update_timer.eta_epoch_seconds);
 }
 
 test "ipc/parseMessage - init with sound" {
@@ -447,7 +447,7 @@ test "ipc/parseMessage - init with sound" {
     try std.testing.expectEqualStrings("/tmp/ding.wav", sound.file);
 }
 
-test "ipc/parseMessage - update_timer missing eta" {
+test "ipc/parseMessage - update_timer missing eta_epoch_seconds" {
     const allocator = std.testing.allocator;
     const json =
         "{" ++

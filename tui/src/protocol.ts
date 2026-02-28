@@ -27,7 +27,7 @@ export type TimerUpdateMessage = {
   remaining_seconds: number;
   total_duration: number;
   status: string;
-  eta_hhmm: string;
+  eta_epoch_seconds: number;
 };
 
 export type TimerFinishedMessage = {
@@ -75,7 +75,7 @@ export const isCoreEvent = (value: unknown): value is CoreEvent => {
       typeof record.remaining_seconds === "number" &&
       typeof record.total_duration === "number" &&
       typeof record.status === "string" &&
-      typeof record.eta_hhmm === "string"
+      typeof record.eta_epoch_seconds === "number"
     );
   }
 

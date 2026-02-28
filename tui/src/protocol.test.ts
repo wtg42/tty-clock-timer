@@ -25,7 +25,7 @@ describe("protocol/isCoreEvent", () => {
         remaining_seconds: 30,
         total_duration: 60,
         status: "running",
-        eta_hhmm: "14:35",
+        eta_epoch_seconds: 52200,
       }),
     ).toBe(true);
   });

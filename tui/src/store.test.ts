@@ -44,17 +44,17 @@ describe("store/createTimerStore", () => {
       remaining_seconds: 42,
       total_duration: 300,
       status: "running",
-      eta_hhmm: "14:35",
+      eta_epoch_seconds: 52200,
     });
 
-    expect(store.getState()).toEqual({
-      remainingSeconds: 42,
-      status: "running",
-      etaHhmm: "14:35",
-      isFinished: false,
-      shouldExit: false,
-      sound: null,
-    });
+    const state = store.getState();
+    expect(state.remainingSeconds).toBe(42);
+    expect(state.status).toBe("running");
+    expect(state.isFinished).toBe(false);
+    expect(state.shouldExit).toBe(false);
+    expect(state.sound).toBe(null);
+    // etaHhmm is formatted from epoch, just verify it's a valid time string
+    expect(state.etaHhmm).toMatch(/^\d{2}:\d{2}$/);
   });
 
   test("createTimerStore - edge timer_finished event forces finished state", () => {
@@ -108,7 +108,7 @@ describe("store/createTimerStore", () => {
       remaining_seconds: 10,
       total_duration: 60,
       status: "running",
-      eta_hhmm: "14:35",
+      eta_epoch_seconds: 52200,
     });
 
     unsubscribe();

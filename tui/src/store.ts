@@ -7,6 +7,18 @@
 import type { CoreEvent } from "./protocol.ts";
 import type { SoundConfig } from "./protocol.ts";
 
+/**
+ * Formats ETA Unix timestamp (seconds) to local time HH:MM.
+ */
+function formatEtaHhmm(etaEpochSeconds: number): string {
+  const date = new Date(etaEpochSeconds * 1000);
+  return date.toLocaleTimeString("zh-TW", {
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  });
+}
+
 export type TimerViewState = {
   remainingSeconds: number | null;
   status: string;
@@ -59,7 +71,7 @@ export const createTimerStore = () => {
             ...state,
             remainingSeconds: event.remaining_seconds,
             status: event.status,
-            etaHhmm: event.eta_hhmm,
+            etaHhmm: formatEtaHhmm(event.eta_epoch_seconds),
             isFinished: event.status === "finished",
           };
           break;
