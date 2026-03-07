@@ -30,24 +30,20 @@ TBD - created by archiving change add-history-list-with-gum. Update Purpose afte
 - **WHEN** 使用者在 list 流程中主動取消
 - **THEN** 系統 MUST 結束流程且不得啟動 timer
 
-### Requirement: 系統必須以 `gum` 優化互動並提供 fallback
-系統 SHOULD 優先使用 `gum` 執行互動選單，但在 `gum` 缺失、執行失敗或逾時時 MUST 自動改用內建純文字選單，維持 `list` 可用性。
+### Requirement: 系統必須透過 prompt helper 執行互動式 history 流程
+系統 MUST 使用 Bun 啟動的 prompt helper 來執行 `list` 與 `list --delete` 的互動流程。系統 MUST NOT 在 prompt helper 缺失、Bun 無法啟動或 helper 執行失敗時自動切換至內建純文字選單。
 
-#### Scenario: `gum` 可用
-- **WHEN** 系統找到可執行的 `gum` binary
-- **THEN** list 流程 SHOULD 透過 `gum` 呈現選單並回傳選擇結果
-
-#### Scenario: `gum` 不可用或失敗
-- **WHEN** `gum` 不存在、執行錯誤或逾時
-- **THEN** 系統 MUST 自動切換至內建純文字選單
-- **AND** 使用者仍可完成選擇並啟動 timer
+#### Scenario: prompt helper 無法使用
+- **WHEN** core 無法啟動 prompt helper 或 helper 回傳錯誤
+- **THEN** 系統 MUST 回報可理解的錯誤訊息
+- **AND** 系統 MUST NOT 自動改用純文字 fallback
 
 ### Requirement: list 子命令支援 --delete 模式進行多選刪除
-使用者可以透過 `tty_clock_timer list --delete` 進入刪除模式，使用 gum 多選介面刪除不需要的歷史時長記錄。
+使用者可以透過 `tty_clock_timer list --delete` 進入刪除模式，系統 MUST 透過 prompt helper 的多選介面刪除不需要的歷史時長記錄。
 
 #### Scenario: 使用者執行 list --delete 進入多選刪除模式
 - **WHEN** 使用者執行 `tty_clock_timer list --delete` 且歷史記錄非空
-- **THEN** 系統展示 gum 多選介面，允許使用者選擇一個或多個時長進行刪除
+- **THEN** 系統 MUST 啟動 prompt helper 多選介面，允許使用者選擇一個或多個時長進行刪除
 
 #### Scenario: 使用者選擇多項刪除
 - **WHEN** 使用者在多選介面中勾選一個或多個項目
@@ -58,6 +54,5 @@ TBD - created by archiving change add-history-list-with-gum. Update Purpose afte
 - **THEN** 系統 MUST 輸出「no history」並結束
 
 #### Scenario: list --delete 時使用者取消
-- **WHEN** 使用者在多選介面中按 Ctrl+C 或未作選擇
+- **WHEN** 使用者在多選介面中主動取消
 - **THEN** 系統 MUST 輸出「no history」並結束（不進行刪除）
-

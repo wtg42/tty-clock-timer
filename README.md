@@ -85,16 +85,16 @@ Built with AI-assisted coding tools.
 
 [list]
   -> Core loads history from XDG state path.
-  -> Prefer gum choose; fallback to built-in text menu when gum unavailable.
+  -> Core launches bundled prompt helper via bun.
   -> Selected duration starts timer flow.
 
 [list --delete]
-  -> Core loads history and opens gum multi-select delete.
+  -> Core loads history and opens prompt helper multi-select delete.
   -> Output remaining entries, or "no history" when empty/canceled.
 
 [--setup-sound]
   -> Core enters interactive setup (does not start timer/TUI).
-  -> Detect player or accept manual path, then write user config.
+  -> Detect player, launch prompt helper, then write user config.
 ```
 
 ## Requirements

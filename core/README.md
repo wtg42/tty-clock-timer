@@ -13,9 +13,10 @@
 - Launching with no args shows full help (same behavior as `--help`).
 - Runtime allocator and I/O come from `main(init: std.process.Init)` via `init.gpa` and `init.io`.
 - Timer duration history is persisted to XDG state path (`$XDG_STATE_HOME` fallback to `$HOME/.local/state`), with dedup + recency ordering + max 10 entries.
-- `list` prefers `gum choose`; if `gum` is unavailable/failed, it falls back to built-in text selection.
-- `list --delete` uses `gum choose --no-limit` for multi-select delete and prints remaining entries (or `no history`).
+- `list` uses the bundled prompt helper (`tui/dist/prompts/helper.js`) to select history durations.
+- `list --delete` uses the bundled prompt helper for multi-select delete and prints remaining entries (or `no history`).
 - `--setup-sound` supports player detection (`paplay`/`pw-play`/`aplay`/`mpg123`/`ffplay`), writes config to XDG config path, and exits without starting timer/TUI.
+- Prompt flows are exchanged with the helper over JSON stdout payloads.
 - When UI startup is available, each run uses a unique socket: `/tmp/tty-clock-timer-*.sock`.
 - UI runtime path resolution follows the contract: `TTY_CLOCK_TUI_CWD` -> `APPDIR` -> local fallback.
 - If no UI connects, CLI fallback still supports quitting with stdin `q`.

@@ -4,21 +4,20 @@
  * Uses Bun.build() with the @opentui/solid bun-plugin to perform
  * Solid JSX transforms at build time instead of runtime.
  *
- * Output: tui/dist/tui.js + libopentui.so
+ * Output: tui/dist/index.js + tui/dist/prompts/helper.js + libopentui.so
  */
 import { existsSync, mkdirSync, copyFileSync } from "fs";
-import { join, dirname } from "path";
+import { join } from "path";
 import solidTransformPlugin from "@opentui/solid/bun-plugin";
 
-const ROOT = dirname(import.meta.dir);
 const TUI_DIR = import.meta.dir;
 const DIST_DIR = join(TUI_DIR, "dist");
+const PROMPTS_DIST_DIR = join(DIST_DIR, "prompts");
 
 // Ensure dist directory exists
 mkdirSync(DIST_DIR, { recursive: true });
 
-// Step 1: Bundle JS/TS with Solid plugin
-const result = await Bun.build({
+const uiResult = await Bun.build({
   entrypoints: [join(TUI_DIR, "src/index.tsx")],
   outdir: DIST_DIR,
   target: "bun",
@@ -34,15 +33,33 @@ const result = await Bun.build({
   ],
 });
 
-if (!result.success) {
+if (!uiResult.success) {
   console.error("Build failed:");
-  for (const log of result.logs) {
+  for (const log of uiResult.logs) {
     console.error(log);
   }
   process.exit(1);
 }
 
-console.log(`✓ Bundle created: ${result.outputs.map(o => o.path).join(", ")}`);
+console.log(`✓ TUI bundle created: ${uiResult.outputs.map((o) => o.path).join(", ")}`);
+
+mkdirSync(PROMPTS_DIST_DIR, { recursive: true });
+
+const promptResult = await Bun.build({
+  entrypoints: [join(TUI_DIR, "src/prompts/helper.ts")],
+  outdir: PROMPTS_DIST_DIR,
+  target: "bun",
+});
+
+if (!promptResult.success) {
+  console.error("Prompt helper build failed:");
+  for (const log of promptResult.logs) {
+    console.error(log);
+  }
+  process.exit(1);
+}
+
+console.log(`✓ Prompt helper bundle created: ${promptResult.outputs.map((o) => o.path).join(", ")}`);
 
 // Step 2: Copy libopentui.so to dist
 const platform = process.platform;

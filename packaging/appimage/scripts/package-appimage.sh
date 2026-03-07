@@ -11,7 +11,6 @@ APPDIR="${OUT_DIR}/AppDir"
 ASSETS_DIR="${ROOT_DIR}/packaging/appimage/assets"
 TUI_SRC_DIR="${ROOT_DIR}/tui"
 CORE_DIR="${ROOT_DIR}/core"
-GUM_SRC="${ROOT_DIR}/packaging/tools/gum/linux-x64/gum"
 
 APPIMAGE_VERSION="${APPIMAGE_VERSION:-dev}"
 APPIMAGE_NAME="tty-clock-timer-${APPIMAGE_VERSION}-linux-x86_64.AppImage"
@@ -51,29 +50,23 @@ if ! "${SCRIPT_DIR}/build-core.sh"; then
   exit 1
 fi
 
-# 第四步：驗證 gum 存在且可執行
-if [[ ! -f "${GUM_SRC}" ]]; then
-  echo "[error] gum 未找到（不應該發生，setup-deps.sh 應已下載）：${GUM_SRC}" >&2
-  exit 1
-fi
-
-if [[ ! -x "${GUM_SRC}" ]]; then
-  echo "[error] gum 不可執行：${GUM_SRC}" >&2
-  exit 1
-fi
-
-# 第五步：編譯 TUI bundle
+# 第四步：編譯 TUI bundle
 echo "[package-appimage] 編譯 TUI bundle..."
 if ! (cd "${TUI_SRC_DIR}" && bun run build); then
   echo "[error] TUI 編譯失敗" >&2
   exit 1
 fi
 
-# 第六步：組裝 AppDir 結構
+PROMPT_HELPER_SRC="${TUI_SRC_DIR}/dist/prompts/helper.js"
+if [[ ! -f "${PROMPT_HELPER_SRC}" ]]; then
+  echo "[error] Prompt helper 編譯輸出不存在：${PROMPT_HELPER_SRC}" >&2
+  exit 1
+fi
+
+# 第五步：組裝 AppDir 結構
 echo "[package-appimage] 組裝 AppDir 結構..."
 install -d "${APPDIR}/usr/bin"
 install -d "${APPDIR}/usr/lib/tty-clock-timer/tui"
-install -d "${APPDIR}/usr/lib/tty-clock-timer/tools/gum/linux-x64"
 install -d "${APPDIR}/usr/share/applications"
 install -d "${APPDIR}/usr/share/icons/hicolor/scalable/apps"
 
@@ -90,7 +83,6 @@ fi
 
 install -m 0755 "${STAGE_DIR}/usr/bin/tic" "${APPDIR}/usr/bin/tic"
 cp -R "${TUI_SRC_DIR}/dist/." "${APPDIR}/usr/lib/tty-clock-timer/tui/"
-install -m 0755 "${GUM_SRC}" "${APPDIR}/usr/lib/tty-clock-timer/tools/gum/linux-x64/gum"
 
 install -m 0644 "${ASSETS_DIR}/tty-clock-timer.desktop" "${APPDIR}/usr/share/applications/tty-clock-timer.desktop"
 install -m 0644 "${ASSETS_DIR}/tty-clock-timer.svg" "${APPDIR}/usr/share/icons/hicolor/scalable/apps/tty-clock-timer.svg"
@@ -98,7 +90,7 @@ install -m 0644 "${ASSETS_DIR}/tty-clock-timer.svg" "${APPDIR}/usr/share/icons/h
 ln -sf "usr/share/applications/tty-clock-timer.desktop" "${APPDIR}/tty-clock-timer.desktop"
 ln -sf "usr/share/icons/hicolor/scalable/apps/tty-clock-timer.svg" "${APPDIR}/tty-clock-timer.svg"
 
-# 第七步：生成 AppRun 啟動器
+# 第六步：生成 AppRun 啟動器
 echo "[package-appimage] 生成 AppRun 啟動器..."
 cat > "${APPDIR}/AppRun" <<'EOF'
 #!/usr/bin/env bash
@@ -107,13 +99,12 @@ set -euo pipefail
 APPDIR="$(cd -- "$(dirname -- "$0")" && pwd)"
 export TTY_CLOCK_TUI_CWD="${TTY_CLOCK_TUI_CWD:-${APPDIR}/usr/lib/tty-clock-timer/tui}"
 export TTY_CLOCK_TUI_ENTRY="${TTY_CLOCK_TUI_ENTRY:-index.js}"
-export TTY_CLOCK_GUM_BIN="${TTY_CLOCK_GUM_BIN:-${APPDIR}/usr/lib/tty-clock-timer/tools/gum/linux-x64/gum}"
 
 exec "${APPDIR}/usr/bin/tic" "$@"
 EOF
 chmod 0755 "${APPDIR}/AppRun"
 
-# 第八步：打包成 AppImage
+# 第七步：打包成 AppImage
 echo "[package-appimage] 使用 appimagetool 打包..."
 if [[ ! -x "${APPIMAGETOOL_BIN}" ]]; then
   echo "[error] appimagetool 不可執行：${APPIMAGETOOL_BIN}" >&2

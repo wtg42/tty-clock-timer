@@ -27,7 +27,6 @@ packaging/
 | `zig` | 0.16+ | Builds the core binary |
 | `bun` | 1.x | Required on host (used to install/build TUI bundle during packaging) |
 | `appimagetool` | - | Packages AppDir into `.AppImage` (auto-discovered or auto-downloaded by scripts) |
-| `gum` | - | Required for runtime interactive list/setup flows (auto-downloaded and bundled) |
 
 You can download `appimagetool` from [GitHub Releases](https://github.com/AppImage/appimagetool/releases).
 
@@ -63,15 +62,19 @@ Recommended: put the downloaded binary at `packaging/tools/appimagetool.AppImage
 
 ### Why does packaging still require host `bun`?
 
-`package-appimage.sh` builds TUI from source (`tui/`) before assembling AppDir, so host `bun` is required at packaging time. The final AppImage runs bundled `index.js` + `libopentui.so` from AppDir via core/TUI contract.
+`package-appimage.sh` builds TUI from source (`tui/`) before assembling AppDir, so host `bun` is required at packaging time. The final AppImage runs bundled `index.js`, `prompts/helper.js`, and `libopentui.so` from AppDir via core/TUI contract.
 
-### How is `gum` handled?
+### How is the prompt helper handled?
 
-`setup-deps.sh` ensures `packaging/tools/gum/linux-x64/gum` exists and is executable (auto-download via `fetch-gum.sh` when missing). Packaging then bundles it into:
+`bun run build` produces a standalone prompt helper bundle at:
 
-`usr/lib/tty-clock-timer/tools/gum/linux-x64/gum`
+`tui/dist/prompts/helper.js`
 
-At runtime, `AppRun` exports `TTY_CLOCK_GUM_BIN` to that bundled path by default.
+Packaging copies that artifact into the AppImage runtime root at:
+
+`usr/lib/tty-clock-timer/tui/prompts/helper.js`
+
+At runtime, core resolves the helper from `APPDIR` or local `tui/dist/prompts/helper.js` fallbacks.
 
 ### How is `APPIMAGE_VERSION` used?
 

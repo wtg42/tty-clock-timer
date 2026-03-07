@@ -1,8 +1,5 @@
-# list-delete-mode Specification
+## MODIFIED Requirements
 
-## Purpose
-TBD - created by archiving change add-list-delete-mode. Update Purpose after archive.
-## Requirements
 ### Requirement: list 子命令支援 --delete 標誌
 使用者可以透過 `tty_clock_timer list --delete` 進入刪除模式，系統 MUST 使用 prompt helper 的多選介面選擇要刪除的歷史時鐘記錄。
 
@@ -16,19 +13,18 @@ TBD - created by archiving change add-list-delete-mode. Update Purpose after arc
 
 #### Scenario: 使用者取消選擇
 - **WHEN** 使用者在 prompt helper 多選介面中主動取消
-- **THEN** 系統輸出「no history」並結束（不進行刪除）
+- **THEN** 系統 MUST 輸出「no history」並結束（不進行刪除）
 
 #### Scenario: 使用者刪除所有項目
 - **WHEN** 使用者選擇刪除所有的歷史時鐘記錄
-- **THEN** 系統刪除所有項目，輸出「no history」並結束
+- **THEN** 系統 MUST 刪除所有項目，輸出「no history」並結束
 
 #### Scenario: 無歷史記錄時執行 list --delete
 - **WHEN** 使用者執行 `tty_clock_timer list --delete` 但歷史記錄為空
-- **THEN** 系統輸出「no history」並結束（不展示選擇介面）
+- **THEN** 系統 MUST 輸出「no history」並結束（不展示選擇介面）
 
-### Requirement: 刪除後的歷史記錄輸出
-刪除成功後，系統應將剩餘的歷史記錄輸出到 stdout，使用者可以驗證刪除結果。
+## REMOVED Requirements
 
-#### Scenario: 輸出剩餘記錄
-- **WHEN** 使用者完成刪除操作
-- **THEN** 系統按最後使用時間倒序輸出剩餘的歷史記錄，每條記錄格式為「HH:MM (總秒數s)」
+### Requirement: gum 多選工具整合
+**Reason**: 多選互動改由 prompt helper 統一提供，不再依賴 `gum` binary。
+**Migration**: `list --delete` 改由 prompt helper 回傳 JSON 結果，core 再據此執行刪除。

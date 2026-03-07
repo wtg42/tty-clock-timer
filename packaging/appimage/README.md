@@ -22,7 +22,6 @@ packaging/appimage/
 │   └── tty-clock-timer.svg
 └── scripts/
     ├── build-core.sh              # build Zig core binary
-    ├── fetch-gum.sh               # download and verify gum tool
     ├── setup-deps.sh              # guardrail checks with auto dependency fetch
     ├── package-appimage.sh        # package AppImage (guardrail flow integrated)
     ├── verify-artifact.sh
@@ -36,19 +35,15 @@ packaging/appimage/
 
 On first run of `package-appimage.sh`, the script **automatically executes** `setup-deps.sh` to check and fetch dependencies:
 
-1. **gum tool**: checks whether `packaging/tools/gum/linux-x64/gum` exists
-   - Missing -> automatically runs `fetch-gum.sh` to download v0.17.0
-   - Present -> skips download and reports ready
+1. **appimagetool**: checks in this priority order
+    - Environment variable `APPIMAGETOOL_BIN` (explicit user override)
+    - Local path `packaging/tools/appimagetool.AppImage`
+    - System path (`command -v appimagetool`)
+    - If none are available -> automatically downloads the latest supported version (1.9.1) to the local path
 
-2. **appimagetool**: checks in this priority order
-   - Environment variable `APPIMAGETOOL_BIN` (explicit user override)
-   - Local path `packaging/tools/appimagetool.AppImage`
-   - System path (`command -v appimagetool`)
-   - If none are available -> automatically downloads the latest supported version (1.9.1) to the local path
-
-3. **TUI dependencies**: checks whether `tui/node_modules` exists
-   - Missing -> automatically runs `bun install` (requires `bun` installed)
-   - Present -> skips install and reports ready
+2. **TUI dependencies**: checks whether `tui/node_modules` exists
+    - Missing -> automatically runs `bun install` (requires `bun` installed)
+    - Present -> skips install and reports ready
 
 ### Incremental Build Strategy
 
@@ -79,16 +74,6 @@ mkdir -p packaging/tools
 wget -O packaging/tools/appimagetool.AppImage \
   https://github.com/AppImage/appimagetool/releases/download/1.9.1/appimagetool-x86_64.AppImage
 chmod +x packaging/tools/appimagetool.AppImage
-```
-
-#### ❌ bundled gum not found
-
-**Cause**: gum has not been downloaded yet on first run.
-
-**Fix**: `package-appimage.sh` auto-runs `setup-deps.sh`, so no manual action is required.
-Or run manually:
-```bash
-bash packaging/appimage/scripts/fetch-gum.sh
 ```
 
 #### ❌ TUI dependencies not installed
@@ -146,6 +131,8 @@ APPIMAGE_VERSION=<version> ./packaging/appimage/scripts/verify-artifact.sh
 ```
 
 - Checks aligned with `checklist.md`: executable bit, naming, and required assets.
+
+Prompt helper artifact is bundled at `AppDir/usr/lib/tty-clock-timer/tui/prompts/helper.js`.
 
 ### 4) MVP Runtime Smoke (Optional)
 

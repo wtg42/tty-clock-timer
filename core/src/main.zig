@@ -13,25 +13,25 @@ const timer_mod = @import("lib/timer.zig");
 
 const SOCKET_BIND_RETRY_LIMIT: u8 = 8;
 const MAX_UI_CWD_CANDIDATES: usize = 5;
+const MAX_PROMPT_HELPER_CANDIDATES: usize = 6;
 const DEFAULT_UI_ENTRY = "src/index.tsx";
-const GUM_BINARY_ENV = "TTY_CLOCK_GUM_BIN";
-const GUM_DEBUG_ENV = "TTY_CLOCK_DEBUG_GUM";
+const PROMPT_HELPER_ENTRY_ENV = "TTY_CLOCK_PROMPT_HELPER_ENTRY";
 const SOCKET_PATH_FORMAT = "/tmp/tty-clock-timer-{x:0>2}{x:0>2}{x:0>2}{x:0>2}{x:0>2}{x:0>2}{x:0>2}{x:0>2}.sock";
 
-const GumSelection = union(enum) {
+const PromptSelection = union(enum) {
     chosen: u32,
     canceled,
     failed,
 };
 
-const GumMultiSelection = union(enum) {
+const PromptMultiSelection = union(enum) {
     chosen: [][]const u8,
     canceled,
     failed,
 };
 
-const GumTextResult = union(enum) {
-    chosen: []u8,
+const PromptSoundSelection = union(enum) {
+    chosen: conf.SoundConfig,
     canceled,
     failed,
 };
@@ -39,6 +39,22 @@ const GumTextResult = union(enum) {
 const UiRuntimeContract = struct {
     cwd: []const u8,
     entry: []const u8,
+};
+
+const PromptHelperCandidates = struct {
+    items: [MAX_PROMPT_HELPER_CANDIDATES][]const u8 = undefined,
+    len: usize = 0,
+
+    fn append(self: *PromptHelperCandidates, candidate: []const u8) void {
+        if (candidate.len == 0) return;
+        if (self.len >= self.items.len) return;
+        self.items[self.len] = candidate;
+        self.len += 1;
+    }
+
+    fn asSlice(self: *const PromptHelperCandidates) []const []const u8 {
+        return self.items[0..self.len];
+    }
 };
 
 const UiCwdCandidates = struct {
@@ -142,7 +158,6 @@ fn resolveEtaEpochSeconds(
     return computed;
 }
 
-
 /// Converts CLI parse errors into readable messages for terminal output.
 fn configErrorMessage(err: conf.ParseError) []const u8 {
     return switch (err) {
@@ -162,52 +177,6 @@ fn formatDurationLabel(allocator: std.mem.Allocator, duration_seconds: u32) ![]u
     return std.fmt.allocPrint(allocator, "{d:0>2}:{d:0>2} ({d}s)", .{ minutes, seconds, duration_seconds });
 }
 
-/// Returns platform-aware candidate paths for bundled gum binaries.
-fn bundledGumPathCandidates() []const []const u8 {
-    const builtin = @import("builtin");
-    return switch (builtin.os.tag) {
-        .macos => switch (builtin.cpu.arch) {
-            .aarch64 => &[_][]const u8{
-                "packaging/tools/gum/darwin-arm64/gum",
-                "../packaging/tools/gum/darwin-arm64/gum",
-                "../../packaging/tools/gum/darwin-arm64/gum",
-                "tools/gum/darwin-arm64/gum",
-                "../tools/gum/darwin-arm64/gum",
-                "../../tools/gum/darwin-arm64/gum",
-            },
-            .x86_64 => &[_][]const u8{
-                "packaging/tools/gum/darwin-x64/gum",
-                "../packaging/tools/gum/darwin-x64/gum",
-                "../../packaging/tools/gum/darwin-x64/gum",
-                "tools/gum/darwin-x64/gum",
-                "../tools/gum/darwin-x64/gum",
-                "../../tools/gum/darwin-x64/gum",
-            },
-            else => &[_][]const u8{},
-        },
-        .linux => switch (builtin.cpu.arch) {
-            .aarch64 => &[_][]const u8{
-                "packaging/tools/gum/linux-arm64/gum",
-                "../packaging/tools/gum/linux-arm64/gum",
-                "../../packaging/tools/gum/linux-arm64/gum",
-                "tools/gum/linux-arm64/gum",
-                "../tools/gum/linux-arm64/gum",
-                "../../tools/gum/linux-arm64/gum",
-            },
-            .x86_64 => &[_][]const u8{
-                "packaging/tools/gum/linux-x64/gum",
-                "../packaging/tools/gum/linux-x64/gum",
-                "../../packaging/tools/gum/linux-x64/gum",
-                "tools/gum/linux-x64/gum",
-                "../tools/gum/linux-x64/gum",
-                "../../tools/gum/linux-x64/gum",
-            },
-            else => &[_][]const u8{},
-        },
-        else => &[_][]const u8{},
-    };
-}
-
 /// Checks whether a file path is accessible from the current working directory.
 fn pathExists(io: Io, path: []const u8) bool {
     const file = Dir.cwd().openFile(io, path, .{}) catch return false;
@@ -215,20 +184,66 @@ fn pathExists(io: Io, path: []const u8) bool {
     return true;
 }
 
-/// Reads gum binary override from environment and ignores empty values.
-fn gumBinaryFromEnv(environ_map: *const std.process.Environ.Map) ?[]const u8 {
-    const value = environ_map.get(GUM_BINARY_ENV) orelse return null;
+/// Reads prompt helper override from environment and ignores empty values.
+fn promptHelperEntryFromEnv(environ_map: *const std.process.Environ.Map) ?[]const u8 {
+    const value = environ_map.get(PROMPT_HELPER_ENTRY_ENV) orelse return null;
     if (value.len == 0) return null;
     return value;
 }
 
-/// Picks the first usable gum binary from env override or bundled candidates.
-fn findAvailableGumBinary(
+/// Builds an AppImage prompt helper candidate from `APPDIR`.
+fn resolveAppImagePromptHelperCandidate(
+    environ_map: *const std.process.Environ.Map,
+    buffer: []u8,
+) ?[]const u8 {
+    const appdir = environ_map.get("APPDIR") orelse return null;
+    if (appdir.len == 0) return null;
+    return std.fmt.bufPrint(buffer, "{s}/usr/lib/tty-clock-timer/tui/prompts/helper.js", .{appdir}) catch null;
+}
+
+fn resolveUiCwdPromptHelperCandidate(
+    environ_map: *const std.process.Environ.Map,
+    buffer: []u8,
+) ?[]const u8 {
+    const ui_cwd = environ_map.get("TTY_CLOCK_TUI_CWD") orelse return null;
+    if (ui_cwd.len == 0) return null;
+    return std.fmt.bufPrint(buffer, "{s}/prompts/helper.js", .{ui_cwd}) catch null;
+}
+
+/// Collects ordered prompt helper entry candidates from env overrides and fallbacks.
+fn collectPromptHelperCandidates(
+    environ_map: *const std.process.Environ.Map,
+    ui_cwd_candidate: ?[]const u8,
+    appdir_candidate: ?[]const u8,
+) PromptHelperCandidates {
+    var candidates = PromptHelperCandidates{};
+    if (promptHelperEntryFromEnv(environ_map)) |override| {
+        candidates.append(override);
+    }
+    if (ui_cwd_candidate) |candidate| {
+        candidates.append(candidate);
+    }
+    if (appdir_candidate) |candidate| {
+        candidates.append(candidate);
+    }
+    const local_fallbacks = [_][]const u8{
+        "tui/dist/prompts/helper.js",
+        "../tui/dist/prompts/helper.js",
+        "../../tui/dist/prompts/helper.js",
+    };
+    for (local_fallbacks) |fallback| {
+        candidates.append(fallback);
+    }
+    return candidates;
+}
+
+/// Picks the first usable prompt helper entry from env override or bundled candidates.
+fn findAvailablePromptHelperEntry(
     io: Io,
     environ_map: *const std.process.Environ.Map,
     candidates: []const []const u8,
 ) ?[]const u8 {
-    if (gumBinaryFromEnv(environ_map)) |env_path| {
+    if (promptHelperEntryFromEnv(environ_map)) |env_path| {
         if (pathExists(io, env_path)) return env_path;
     }
 
@@ -239,17 +254,14 @@ fn findAvailableGumBinary(
     return null;
 }
 
-/// Finds a bundled gum executable using configured search candidates.
-fn findBundledGum(io: Io, environ_map: *const std.process.Environ.Map) ?[]const u8 {
-    return findAvailableGumBinary(io, environ_map, bundledGumPathCandidates());
-}
-
-/// Checks whether gum debug logging is enabled via environment flags.
-fn gumDebugEnabled(environ_map: *const std.process.Environ.Map) bool {
-    const value = environ_map.get(GUM_DEBUG_ENV) orelse return false;
-    return std.mem.eql(u8, value, "1") or
-        std.mem.eql(u8, value, "true") or
-        std.mem.eql(u8, value, "yes");
+/// Finds a prompt helper entry using configured search candidates.
+fn findPromptHelperEntry(io: Io, environ_map: *const std.process.Environ.Map) ?[]const u8 {
+    var ui_cwd_candidate_buffer: [std.fs.max_path_bytes]u8 = undefined;
+    var appdir_candidate_buffer: [std.fs.max_path_bytes]u8 = undefined;
+    const ui_cwd_candidate = resolveUiCwdPromptHelperCandidate(environ_map, &ui_cwd_candidate_buffer);
+    const appdir_candidate = resolveAppImagePromptHelperCandidate(environ_map, &appdir_candidate_buffer);
+    const candidates = collectPromptHelperCandidates(environ_map, ui_cwd_candidate, appdir_candidate);
+    return findAvailablePromptHelperEntry(io, environ_map, candidates.asSlice());
 }
 
 /// Duplicates an argument, tracks ownership, and appends it to argv.
@@ -264,434 +276,193 @@ fn appendArgOwned(
     try args.append(allocator, duped);
 }
 
-/// Runs gum choose to pick one history duration and maps exit semantics.
-fn chooseWithGum(
+const PromptCommand = enum {
+    history_select,
+    history_delete,
+    setup_sound,
+
+    fn subcommand(self: PromptCommand) []const u8 {
+        return switch (self) {
+            .history_select => "history-select",
+            .history_delete => "history-delete",
+            .setup_sound => "setup-sound",
+        };
+    }
+};
+
+const PromptCommandResult = struct {
+    stdout: []u8,
+    term: std.process.Child.Term,
+};
+
+fn runPromptHelperCommand(
     allocator: std.mem.Allocator,
     io: Io,
     environ_map: *const std.process.Environ.Map,
-    stderr_writer: *Io.Writer,
+    command: PromptCommand,
+    extra_args: []const []const u8,
+) !PromptCommandResult {
+    if (!std.process.can_spawn) return error.PromptHelperUnavailable;
+
+    var argv_owned: std.ArrayList([]u8) = .empty;
+    defer {
+        for (argv_owned.items) |value| allocator.free(value);
+        argv_owned.deinit(allocator);
+    }
+
+    var argv_list: std.ArrayList([]const u8) = .empty;
+    defer argv_list.deinit(allocator);
+
+    const helper_entry = findPromptHelperEntry(io, environ_map) orelse return error.PromptHelperUnavailable;
+    try appendArgOwned(allocator, &argv_list, &argv_owned, "bun");
+    try appendArgOwned(allocator, &argv_list, &argv_owned, "run");
+    try appendArgOwned(allocator, &argv_list, &argv_owned, helper_entry);
+    try appendArgOwned(allocator, &argv_list, &argv_owned, "--");
+    try appendArgOwned(allocator, &argv_list, &argv_owned, command.subcommand());
+    for (extra_args) |arg| try appendArgOwned(allocator, &argv_list, &argv_owned, arg);
+
+    var child = std.process.spawn(io, .{
+        .argv = argv_list.items,
+        .stdin = .inherit,
+        .stdout = .pipe,
+        .stderr = .inherit,
+    }) catch return error.PromptHelperSpawnFailed;
+    defer child.kill(io);
+
+    var helper_stdout_buffer: [4096]u8 = undefined;
+    var helper_stdout_reader = child.stdout.?.readerStreaming(io, &helper_stdout_buffer);
+    const helper_stdout = helper_stdout_reader.interface.allocRemaining(allocator, .limited(16384)) catch return error.PromptHelperReadFailed;
+
+    const term = child.wait(io) catch {
+        allocator.free(helper_stdout);
+        return error.PromptHelperWaitFailed;
+    };
+
+    return .{ .stdout = helper_stdout, .term = term };
+}
+
+fn chooseWithPromptHelper(
+    allocator: std.mem.Allocator,
+    io: Io,
+    environ_map: *const std.process.Environ.Map,
     entries: []const history.Entry,
-) !GumSelection {
-    if (!std.process.can_spawn) return .failed;
-
-    var labels: std.ArrayList([]u8) = .empty;
+) !PromptSelection {
+    var extra_args: std.ArrayList([]const u8) = .empty;
+    defer extra_args.deinit(allocator);
+    var owned_values: std.ArrayList([]u8) = .empty;
     defer {
-        for (labels.items) |label| allocator.free(label);
-        labels.deinit(allocator);
+        for (owned_values.items) |value| allocator.free(value);
+        owned_values.deinit(allocator);
     }
 
-    try labels.ensureTotalCapacity(allocator, entries.len);
     for (entries) |entry| {
-        try labels.append(allocator, try formatDurationLabel(allocator, entry.duration_seconds));
+        const value = try std.fmt.allocPrint(allocator, "{d}", .{entry.duration_seconds});
+        try owned_values.append(allocator, value);
+        try extra_args.append(allocator, "--duration-seconds");
+        try extra_args.append(allocator, value);
     }
 
-    var argv_owned: std.ArrayList([]u8) = .empty;
-    defer {
-        for (argv_owned.items) |value| allocator.free(value);
-        argv_owned.deinit(allocator);
-    }
+    const command_result = runPromptHelperCommand(allocator, io, environ_map, .history_select, extra_args.items) catch return .failed;
+    defer allocator.free(command_result.stdout);
 
-    var argv_list: std.ArrayList([]const u8) = .empty;
-    defer argv_list.deinit(allocator);
+    var parsed = std.json.parseFromSlice(std.json.Value, allocator, command_result.stdout, .{}) catch return .failed;
+    defer parsed.deinit();
+    if (parsed.value != .object) return .failed;
 
-    const gum_binary = findBundledGum(io, environ_map) orelse "gum";
-    try appendArgOwned(allocator, &argv_list, &argv_owned, gum_binary);
-    try appendArgOwned(allocator, &argv_list, &argv_owned, "choose");
-    try appendArgOwned(allocator, &argv_list, &argv_owned, "--header");
-    try appendArgOwned(allocator, &argv_list, &argv_owned, "Select timer duration");
-    try appendArgOwned(allocator, &argv_list, &argv_owned, "--cursor");
-    try appendArgOwned(allocator, &argv_list, &argv_owned, "> ");
-    for (labels.items) |label| {
-        try appendArgOwned(allocator, &argv_list, &argv_owned, label);
-    }
+    const status = parsed.value.object.get("status") orelse return .failed;
+    if (status != .string) return .failed;
+    if (std.mem.eql(u8, status.string, "canceled")) return .canceled;
+    if (!std.mem.eql(u8, status.string, "submitted")) return .failed;
 
-    var child = std.process.spawn(io, .{
-        .argv = argv_list.items,
-        .stdin = .inherit,
-        .stdout = .pipe,
-        .stderr = .inherit,
-    }) catch |err| {
-        if (gumDebugEnabled(environ_map)) {
-            stderr_writer.print("Debug: gum spawn failed ({s})\n", .{@errorName(err)}) catch {};
-            stderr_writer.flush() catch {};
-        }
-        return .failed;
+    const duration_value = parsed.value.object.get("duration_seconds") orelse return .failed;
+    const duration_int = switch (duration_value) {
+        .integer => |value| value,
+        else => return .failed,
     };
-    defer child.kill(io);
-
-    var gum_stdout_buffer: [1024]u8 = undefined;
-    var gum_stdout_reader = child.stdout.?.readerStreaming(io, &gum_stdout_buffer);
-    const gum_stdout = gum_stdout_reader.interface.allocRemaining(allocator, .limited(4096)) catch |err| {
-        if (gumDebugEnabled(environ_map)) {
-            stderr_writer.print("Debug: gum stdout read failed ({s})\n", .{@errorName(err)}) catch {};
-            stderr_writer.flush() catch {};
-        }
-        return .failed;
-    };
-    defer allocator.free(gum_stdout);
-
-    const term = child.wait(io) catch |err| {
-        if (gumDebugEnabled(environ_map)) {
-            stderr_writer.print("Debug: gum wait failed ({s})\n", .{@errorName(err)}) catch {};
-            stderr_writer.flush() catch {};
-        }
-        return .failed;
-    };
-
-    switch (term) {
-        .exited => |code| {
-            if (code != 0) {
-                const trimmed_stdout = std.mem.trim(u8, gum_stdout, " \t\r\n");
-
-                if (code == 130) {
-                    if (gumDebugEnabled(environ_map)) {
-                        stderr_writer.print("Debug: gum canceled (exit code={d})\n", .{code}) catch {};
-                        stderr_writer.flush() catch {};
-                    }
-                    return .canceled;
-                }
-
-                if (code == 1 and trimmed_stdout.len == 0) {
-                    if (gumDebugEnabled(environ_map)) {
-                        stderr_writer.print("Debug: gum canceled (exit code={d})\n", .{code}) catch {};
-                        stderr_writer.flush() catch {};
-                    }
-                    return .canceled;
-                }
-
-                if (gumDebugEnabled(environ_map)) {
-                    stderr_writer.print(
-                        "Debug: gum failed (exit code={d}, stdout_bytes={d})\n",
-                        .{ code, gum_stdout.len },
-                    ) catch {};
-                    stderr_writer.flush() catch {};
-                }
-                return .failed;
-            }
-        },
-        .signal => |signal| {
-            if (signal == std.posix.SIG.INT) {
-                if (gumDebugEnabled(environ_map)) {
-                    stderr_writer.print("Debug: gum canceled (signal=INT)\n", .{}) catch {};
-                    stderr_writer.flush() catch {};
-                }
-                return .canceled;
-            }
-            if (gumDebugEnabled(environ_map)) {
-                stderr_writer.print("Debug: gum failed (signal={s})\n", .{@tagName(signal)}) catch {};
-                stderr_writer.flush() catch {};
-            }
-            return .failed;
-        },
-        else => {
-            if (gumDebugEnabled(environ_map)) {
-                stderr_writer.print("Debug: gum failed (non-exit termination)\n", .{}) catch {};
-                stderr_writer.flush() catch {};
-            }
-            return .failed;
-        },
-    }
-
-    const selected = std.mem.trim(u8, gum_stdout, " \t\r\n");
-    if (selected.len == 0) return .canceled;
-
-    for (labels.items, entries) |label, entry| {
-        if (std.mem.eql(u8, selected, label)) return .{ .chosen = entry.duration_seconds };
-    }
-    if (gumDebugEnabled(environ_map)) {
-        stderr_writer.print("Debug: gum failed (unknown selection=\"{s}\")\n", .{selected}) catch {};
-        stderr_writer.flush() catch {};
-    }
-    return .failed;
+    if (duration_int <= 0 or duration_int > std.math.maxInt(u32)) return .failed;
+    return .{ .chosen = @intCast(duration_int) };
 }
 
-/// Runs gum multi-select and returns selected history labels for deletion.
-fn deleteWithGum(
+fn deleteWithPromptHelper(
     allocator: std.mem.Allocator,
     io: Io,
     environ_map: *const std.process.Environ.Map,
-    stderr_writer: *Io.Writer,
     entries: []const history.Entry,
-) !GumMultiSelection {
-    if (!std.process.can_spawn) return .failed;
-
-    var labels: std.ArrayList([]u8) = .empty;
+) !PromptMultiSelection {
+    var extra_args: std.ArrayList([]const u8) = .empty;
+    defer extra_args.deinit(allocator);
+    var owned_values: std.ArrayList([]u8) = .empty;
     defer {
-        for (labels.items) |label| allocator.free(label);
-        labels.deinit(allocator);
+        for (owned_values.items) |value| allocator.free(value);
+        owned_values.deinit(allocator);
     }
 
-    try labels.ensureTotalCapacity(allocator, entries.len);
     for (entries) |entry| {
-        try labels.append(allocator, try formatDurationLabel(allocator, entry.duration_seconds));
+        const value = try std.fmt.allocPrint(allocator, "{d}", .{entry.duration_seconds});
+        try owned_values.append(allocator, value);
+        try extra_args.append(allocator, "--duration-seconds");
+        try extra_args.append(allocator, value);
     }
 
-    var argv_owned: std.ArrayList([]u8) = .empty;
-    defer {
-        for (argv_owned.items) |value| allocator.free(value);
-        argv_owned.deinit(allocator);
+    const command_result = runPromptHelperCommand(allocator, io, environ_map, .history_delete, extra_args.items) catch return .failed;
+    defer allocator.free(command_result.stdout);
+
+    var parsed = std.json.parseFromSlice(std.json.Value, allocator, command_result.stdout, .{}) catch return .failed;
+    defer parsed.deinit();
+    if (parsed.value != .object) return .failed;
+
+    const status = parsed.value.object.get("status") orelse return .failed;
+    if (status != .string) return .failed;
+    if (std.mem.eql(u8, status.string, "canceled")) return .canceled;
+    if (!std.mem.eql(u8, status.string, "submitted")) return .failed;
+
+    const selected_labels = parsed.value.object.get("selected_labels") orelse return .failed;
+    if (selected_labels != .array) return .failed;
+
+    var labels: std.ArrayList([]const u8) = .empty;
+    defer labels.deinit(allocator);
+    for (selected_labels.array.items) |item| {
+        if (item != .string) return .failed;
+        try labels.append(allocator, try allocator.dupe(u8, item.string));
     }
-
-    var argv_list: std.ArrayList([]const u8) = .empty;
-    defer argv_list.deinit(allocator);
-
-    const gum_binary = findBundledGum(io, environ_map) orelse "gum";
-    try appendArgOwned(allocator, &argv_list, &argv_owned, gum_binary);
-    try appendArgOwned(allocator, &argv_list, &argv_owned, "choose");
-    try appendArgOwned(allocator, &argv_list, &argv_owned, "--no-limit");
-    try appendArgOwned(allocator, &argv_list, &argv_owned, "--header");
-    try appendArgOwned(allocator, &argv_list, &argv_owned, "Select durations to delete");
-    try appendArgOwned(allocator, &argv_list, &argv_owned, "--cursor");
-    try appendArgOwned(allocator, &argv_list, &argv_owned, "> ");
-    for (labels.items) |label| {
-        try appendArgOwned(allocator, &argv_list, &argv_owned, label);
-    }
-
-    var child = std.process.spawn(io, .{
-        .argv = argv_list.items,
-        .stdin = .inherit,
-        .stdout = .pipe,
-        .stderr = .inherit,
-    }) catch |err| {
-        if (gumDebugEnabled(environ_map)) {
-            stderr_writer.print("Debug: gum spawn failed ({s})\n", .{@errorName(err)}) catch {};
-            stderr_writer.flush() catch {};
-        }
-        return .failed;
-    };
-    defer child.kill(io);
-
-    var gum_stdout_buffer: [4096]u8 = undefined;
-    var gum_stdout_reader = child.stdout.?.readerStreaming(io, &gum_stdout_buffer);
-    const gum_stdout = gum_stdout_reader.interface.allocRemaining(allocator, .limited(16384)) catch |err| {
-        if (gumDebugEnabled(environ_map)) {
-            stderr_writer.print("Debug: gum stdout read failed ({s})\n", .{@errorName(err)}) catch {};
-            stderr_writer.flush() catch {};
-        }
-        return .failed;
-    };
-    defer allocator.free(gum_stdout);
-
-    const term = child.wait(io) catch |err| {
-        if (gumDebugEnabled(environ_map)) {
-            stderr_writer.print("Debug: gum wait failed ({s})\n", .{@errorName(err)}) catch {};
-            stderr_writer.flush() catch {};
-        }
-        return .failed;
-    };
-
-    switch (term) {
-        .exited => |code| {
-            if (code != 0) {
-                const trimmed_stdout = std.mem.trim(u8, gum_stdout, " \t\r\n");
-
-                if (code == 130) {
-                    if (gumDebugEnabled(environ_map)) {
-                        stderr_writer.print("Debug: gum canceled (exit code={d})\n", .{code}) catch {};
-                        stderr_writer.flush() catch {};
-                    }
-                    return .canceled;
-                }
-
-                if (code == 1 and trimmed_stdout.len == 0) {
-                    if (gumDebugEnabled(environ_map)) {
-                        stderr_writer.print("Debug: gum canceled (exit code={d})\n", .{code}) catch {};
-                        stderr_writer.flush() catch {};
-                    }
-                    return .canceled;
-                }
-
-                if (gumDebugEnabled(environ_map)) {
-                    stderr_writer.print(
-                        "Debug: gum failed (exit code={d}, stdout_bytes={d})\n",
-                        .{ code, gum_stdout.len },
-                    ) catch {};
-                    stderr_writer.flush() catch {};
-                }
-                return .failed;
-            }
-        },
-        .signal => |signal| {
-            if (signal == std.posix.SIG.INT) {
-                if (gumDebugEnabled(environ_map)) {
-                    stderr_writer.print("Debug: gum canceled (signal=INT)\n", .{}) catch {};
-                    stderr_writer.flush() catch {};
-                }
-                return .canceled;
-            }
-            if (gumDebugEnabled(environ_map)) {
-                stderr_writer.print("Debug: gum failed (signal={s})\n", .{@tagName(signal)}) catch {};
-                stderr_writer.flush() catch {};
-            }
-            return .failed;
-        },
-        else => {
-            if (gumDebugEnabled(environ_map)) {
-                stderr_writer.print("Debug: gum failed (non-exit termination)\n", .{}) catch {};
-                stderr_writer.flush() catch {};
-            }
-            return .failed;
-        },
-    }
-
-    const selected = std.mem.trim(u8, gum_stdout, " \t\r\n");
-    if (selected.len == 0) return .canceled;
-
-    var selected_labels: std.ArrayList([]const u8) = .empty;
-    defer selected_labels.deinit(allocator);
-
-    var line_iter = std.mem.splitSequence(u8, selected, "\n");
-    while (line_iter.next()) |line| {
-        const trimmed = std.mem.trim(u8, line, " \t\r");
-        if (trimmed.len > 0) {
-            const owned = try allocator.dupe(u8, trimmed);
-            try selected_labels.append(allocator, owned);
-        }
-    }
-
-    if (selected_labels.items.len == 0) return .canceled;
-
-    return .{ .chosen = try selected_labels.toOwnedSlice(allocator) };
+    if (labels.items.len == 0) return .canceled;
+    return .{ .chosen = try labels.toOwnedSlice(allocator) };
 }
 
-/// Runs gum choose for arbitrary text options and returns selected text.
-fn gumChooseText(
+fn runSetupSoundPrompt(
     allocator: std.mem.Allocator,
     io: Io,
     environ_map: *const std.process.Environ.Map,
-    stderr_writer: *Io.Writer,
-    header: []const u8,
-    options: []const []const u8,
-) !GumTextResult {
-    if (!std.process.can_spawn) return .failed;
+    detected_players: []const []const u8,
+) !PromptSoundSelection {
+    var extra_args: std.ArrayList([]const u8) = .empty;
+    defer extra_args.deinit(allocator);
 
-    var argv_owned: std.ArrayList([]u8) = .empty;
-    defer {
-        for (argv_owned.items) |value| allocator.free(value);
-        argv_owned.deinit(allocator);
+    for (detected_players) |player| {
+        try extra_args.append(allocator, "--player");
+        try extra_args.append(allocator, player);
     }
 
-    var argv_list: std.ArrayList([]const u8) = .empty;
-    defer argv_list.deinit(allocator);
+    const command_result = runPromptHelperCommand(allocator, io, environ_map, .setup_sound, extra_args.items) catch return .failed;
+    defer allocator.free(command_result.stdout);
 
-    const gum_binary = findBundledGum(io, environ_map) orelse "gum";
-    try appendArgOwned(allocator, &argv_list, &argv_owned, gum_binary);
-    try appendArgOwned(allocator, &argv_list, &argv_owned, "choose");
-    try appendArgOwned(allocator, &argv_list, &argv_owned, "--header");
-    try appendArgOwned(allocator, &argv_list, &argv_owned, header);
-    for (options) |option| {
-        try appendArgOwned(allocator, &argv_list, &argv_owned, option);
-    }
+    var parsed = std.json.parseFromSlice(std.json.Value, allocator, command_result.stdout, .{}) catch return .failed;
+    defer parsed.deinit();
+    if (parsed.value != .object) return .failed;
 
-    var child = std.process.spawn(io, .{
-        .argv = argv_list.items,
-        .stdin = .inherit,
-        .stdout = .pipe,
-        .stderr = .inherit,
-    }) catch |err| {
-        if (gumDebugEnabled(environ_map)) {
-            stderr_writer.print("Debug: gum spawn failed ({s})\n", .{@errorName(err)}) catch {};
-            stderr_writer.flush() catch {};
-        }
-        return .failed;
-    };
-    defer child.kill(io);
+    const status = parsed.value.object.get("status") orelse return .failed;
+    if (status != .string) return .failed;
+    if (std.mem.eql(u8, status.string, "canceled")) return .canceled;
+    if (!std.mem.eql(u8, status.string, "submitted")) return .failed;
 
-    var gum_stdout_buffer: [1024]u8 = undefined;
-    var gum_stdout_reader = child.stdout.?.readerStreaming(io, &gum_stdout_buffer);
-    const gum_stdout = gum_stdout_reader.interface.allocRemaining(allocator, .limited(4096)) catch {
-        return .failed;
-    };
-    defer allocator.free(gum_stdout);
+    const player_value = parsed.value.object.get("player") orelse return .failed;
+    const file_value = parsed.value.object.get("file") orelse return .failed;
+    if (player_value != .string or file_value != .string) return .failed;
 
-    const term = child.wait(io) catch return .failed;
-    switch (term) {
-        .exited => |code| {
-            if (code != 0) {
-                if (code == 130) return .canceled;
-                const trimmed_stdout = std.mem.trim(u8, gum_stdout, " \t\r\n");
-                if (code == 1 and trimmed_stdout.len == 0) return .canceled;
-                return .failed;
-            }
-        },
-        .signal => |signal| {
-            if (signal == std.posix.SIG.INT) return .canceled;
-            return .failed;
-        },
-        else => return .failed,
-    }
-
-    const selected = std.mem.trim(u8, gum_stdout, " \t\r\n");
-    if (selected.len == 0) return .canceled;
-    return .{ .chosen = try allocator.dupe(u8, selected) };
-}
-
-/// Runs gum input and returns trimmed user text when available.
-fn gumInputText(
-    allocator: std.mem.Allocator,
-    io: Io,
-    environ_map: *const std.process.Environ.Map,
-    stderr_writer: *Io.Writer,
-    placeholder: []const u8,
-) !GumTextResult {
-    if (!std.process.can_spawn) return .failed;
-
-    var argv_owned: std.ArrayList([]u8) = .empty;
-    defer {
-        for (argv_owned.items) |value| allocator.free(value);
-        argv_owned.deinit(allocator);
-    }
-
-    var argv_list: std.ArrayList([]const u8) = .empty;
-    defer argv_list.deinit(allocator);
-
-    const gum_binary = findBundledGum(io, environ_map) orelse "gum";
-    try appendArgOwned(allocator, &argv_list, &argv_owned, gum_binary);
-    try appendArgOwned(allocator, &argv_list, &argv_owned, "input");
-    try appendArgOwned(allocator, &argv_list, &argv_owned, "--placeholder");
-    try appendArgOwned(allocator, &argv_list, &argv_owned, placeholder);
-
-    var child = std.process.spawn(io, .{
-        .argv = argv_list.items,
-        .stdin = .inherit,
-        .stdout = .pipe,
-        .stderr = .inherit,
-    }) catch |err| {
-        if (gumDebugEnabled(environ_map)) {
-            stderr_writer.print("Debug: gum spawn failed ({s})\n", .{@errorName(err)}) catch {};
-            stderr_writer.flush() catch {};
-        }
-        return .failed;
-    };
-    defer child.kill(io);
-
-    var gum_stdout_buffer: [2048]u8 = undefined;
-    var gum_stdout_reader = child.stdout.?.readerStreaming(io, &gum_stdout_buffer);
-    const gum_stdout = gum_stdout_reader.interface.allocRemaining(allocator, .limited(8192)) catch {
-        return .failed;
-    };
-    defer allocator.free(gum_stdout);
-
-    const term = child.wait(io) catch return .failed;
-    switch (term) {
-        .exited => |code| {
-            if (code != 0) {
-                if (code == 130) return .canceled;
-                const trimmed_stdout = std.mem.trim(u8, gum_stdout, " \t\r\n");
-                if (code == 1 and trimmed_stdout.len == 0) return .canceled;
-                return .failed;
-            }
-        },
-        .signal => |signal| {
-            if (signal == std.posix.SIG.INT) return .canceled;
-            return .failed;
-        },
-        else => return .failed,
-    }
-
-    const value = std.mem.trim(u8, gum_stdout, " \t\r\n");
-    if (value.len == 0) return .canceled;
-    return .{ .chosen = try allocator.dupe(u8, value) };
+    return .{ .chosen = .{
+        .player = try allocator.dupe(u8, player_value.string),
+        .file = try allocator.dupe(u8, file_value.string),
+    } };
 }
 
 /// Resolves a sound player binary path by invoking `which`.
@@ -738,12 +509,11 @@ fn runSetupSound(
     allocator: std.mem.Allocator,
     io: Io,
     stdout_writer: *Io.Writer,
-    stderr_writer: *Io.Writer,
     environ_map: *const std.process.Environ.Map,
 ) !void {
     const candidate_names = [_][]const u8{ "paplay", "pw-play", "aplay", "mpg123", "ffplay" };
 
-    var detected_players: std.ArrayList([]u8) = .empty;
+    var detected_players: std.ArrayList([]const u8) = .empty;
     defer {
         for (detected_players.items) |player| allocator.free(player);
         detected_players.deinit(allocator);
@@ -756,113 +526,32 @@ fn runSetupSound(
         }
     }
 
-    var selected_player: ?[]u8 = null;
-    defer if (selected_player) |value| allocator.free(value);
-
-    if (detected_players.items.len > 0) {
-        var options: std.ArrayList([]const u8) = .empty;
-        defer options.deinit(allocator);
-        for (detected_players.items) |item| {
-            try options.append(allocator, item);
-        }
-
-        switch (try gumChooseText(
-            allocator,
-            io,
-            environ_map,
-            stderr_writer,
-            "Select a sound player",
-            options.items,
-        )) {
-            .chosen => |value| selected_player = value,
-            .canceled => return error.UserCanceled,
-            .failed => return error.GumFailed,
-        }
-    } else {
-        try stdout_writer.print("No known player found. Enter full player path.\n", .{});
-        try stdout_writer.flush();
-
-        switch (try gumInputText(
-            allocator,
-            io,
-            environ_map,
-            stderr_writer,
-            "/usr/bin/paplay",
-        )) {
-            .chosen => |value| selected_player = value,
-            .canceled => return error.UserCanceled,
-            .failed => return error.GumFailed,
-        }
-    }
-
-    const player = selected_player orelse return error.GumFailed;
-
-    const selected_file = switch (try gumInputText(
+    const prompt_result = try runSetupSoundPrompt(
         allocator,
         io,
         environ_map,
-        stderr_writer,
-        "/path/to/sound.wav",
-    )) {
+        detected_players.items,
+    );
+
+    const selected_sound = switch (prompt_result) {
         .chosen => |value| value,
         .canceled => return error.UserCanceled,
-        .failed => return error.GumFailed,
+        .failed => return error.PromptHelperFailed,
     };
-    defer allocator.free(selected_file);
+    defer {
+        allocator.free(selected_sound.player);
+        allocator.free(selected_sound.file);
+    }
 
     try conf.writeConfig(allocator, io, environ_map, .{
-        .sound = .{
-            .player = player,
-            .file = selected_file,
-        },
+        .sound = selected_sound,
     });
 
     try stdout_writer.print("Sound setup saved.\n", .{});
     try stdout_writer.flush();
 }
 
-/// Uses stdin fallback selection when gum UI is unavailable.
-fn chooseWithFallback(
-    allocator: std.mem.Allocator,
-    io: Io,
-    stdout_writer: *Io.Writer,
-    entries: []const history.Entry,
-) !?u32 {
-    var stdin_buffer: [1024]u8 = undefined;
-    var stdin_reader: Io.File.Reader = .initStreaming(.stdin(), io, &stdin_buffer);
-
-    while (true) {
-        try stdout_writer.print("History durations:\n", .{});
-        var index: usize = 0;
-        while (index < entries.len) : (index += 1) {
-            const label = try formatDurationLabel(allocator, entries[index].duration_seconds);
-            defer allocator.free(label);
-            try stdout_writer.print("  {d}. {s}\n", .{ index + 1, label });
-        }
-        try stdout_writer.print("Select an item (1-{d}) or q to cancel: ", .{entries.len});
-        try stdout_writer.flush();
-
-        const line = stdin_reader.interface.takeDelimiter('\n') catch |err| switch (err) {
-            error.ReadFailed => return null,
-            error.StreamTooLong => {
-                try stdout_writer.print("Input too long. Try again.\n", .{});
-                continue;
-            },
-        } orelse return null;
-
-        const selection = history.selectionFromInput(line, entries.len);
-        switch (selection) {
-            .canceled => return null,
-            .invalid => {
-                try stdout_writer.print("Invalid selection.\n", .{});
-                continue;
-            },
-            .chosen => |chosen| return entries[chosen].duration_seconds,
-        }
-    }
-}
-
-/// Loads history and resolves one duration via gum or stdin fallback.
+/// Loads history and resolves one duration via prompt helper.
 fn resolveDurationFromHistory(
     allocator: std.mem.Allocator,
     io: Io,
@@ -892,13 +581,15 @@ fn resolveDurationFromHistory(
         return null;
     }
 
-    switch (try chooseWithGum(allocator, io, environ_map, stderr_writer, entries)) {
+    switch (try chooseWithPromptHelper(allocator, io, environ_map, entries)) {
         .chosen => |selected| return selected,
         .canceled => return null,
-        .failed => {},
+        .failed => {
+            try stderr_writer.print("Error: prompt helper selection failed\n", .{});
+            try stderr_writer.flush();
+            return null;
+        },
     }
-
-    return try chooseWithFallback(allocator, io, stdout_writer, entries);
 }
 
 /// Loads history, deletes selected entries, and writes the updated list.
@@ -932,7 +623,7 @@ fn resolveDeletionFromHistory(
         return;
     }
 
-    switch (try deleteWithGum(allocator, io, environ_map, stderr_writer, entries)) {
+    switch (try deleteWithPromptHelper(allocator, io, environ_map, entries)) {
         .chosen => |selected_labels| {
             defer {
                 for (selected_labels) |label| allocator.free(label);
@@ -963,7 +654,7 @@ fn resolveDeletionFromHistory(
             try stdout_writer.print("no history\n", .{});
         },
         .failed => {
-            try stderr_writer.print("Error: gum selection failed\n", .{});
+            try stderr_writer.print("Error: prompt helper selection failed\n", .{});
             try stderr_writer.flush();
         },
     }
@@ -1564,7 +1255,6 @@ pub fn main(init: std.process.Init) !void {
             allocator,
             io,
             stdout_writer,
-            stderr_writer,
             init.environ_map,
         ) catch |err| switch (err) {
             error.UserCanceled => {
@@ -1572,8 +1262,8 @@ pub fn main(init: std.process.Init) !void {
                 try stderr_writer.flush();
                 std.process.exit(1);
             },
-            error.GumFailed => {
-                try stderr_writer.print("Error: gum interaction failed\n", .{});
+            error.PromptHelperFailed => {
+                try stderr_writer.print("Error: prompt helper interaction failed\n", .{});
                 try stderr_writer.flush();
                 std.process.exit(1);
             },
@@ -1920,30 +1610,30 @@ test "main/resolveEtaEpochSeconds - minute boundary no drift" {
     try std.testing.expectEqual(@as(u64, base_time + 30), resumed_eta);
 }
 
-test "main/gumBinaryFromEnv - uses override and ignores empty" {
+test "main/promptHelperEntryFromEnv - uses override and ignores empty" {
     const allocator = std.testing.allocator;
     var environ_map = std.process.Environ.Map.init(allocator);
     defer environ_map.deinit();
 
-    try std.testing.expectEqual(@as(?[]const u8, null), gumBinaryFromEnv(&environ_map));
+    try std.testing.expectEqual(@as(?[]const u8, null), promptHelperEntryFromEnv(&environ_map));
 
-    try environ_map.put(GUM_BINARY_ENV, "");
-    try std.testing.expectEqual(@as(?[]const u8, null), gumBinaryFromEnv(&environ_map));
+    try environ_map.put(PROMPT_HELPER_ENTRY_ENV, "");
+    try std.testing.expectEqual(@as(?[]const u8, null), promptHelperEntryFromEnv(&environ_map));
 
-    try environ_map.put(GUM_BINARY_ENV, "/tmp/gum");
-    const selected = gumBinaryFromEnv(&environ_map) orelse {
+    try environ_map.put(PROMPT_HELPER_ENTRY_ENV, "/tmp/helper.js");
+    const selected = promptHelperEntryFromEnv(&environ_map) orelse {
         try std.testing.expect(false);
         return;
     };
-    try std.testing.expectEqualStrings("/tmp/gum", selected);
+    try std.testing.expectEqualStrings("/tmp/helper.js", selected);
 }
 
-test "main/findAvailableGumBinary - prefers env override" {
+test "main/findAvailablePromptHelperEntry - prefers env override" {
     const allocator = std.testing.allocator;
     const io = std.testing.io;
 
-    const env_file = ".zig-test-gum-env-override";
-    const candidate_file = ".zig-test-gum-candidate";
+    const env_file = ".zig-test-helper-env-override.js";
+    const candidate_file = ".zig-test-helper-candidate.js";
     Dir.cwd().deleteFile(io, env_file) catch {};
     Dir.cwd().deleteFile(io, candidate_file) catch {};
     defer Dir.cwd().deleteFile(io, env_file) catch {};
@@ -1956,20 +1646,20 @@ test "main/findAvailableGumBinary - prefers env override" {
 
     var environ_map = std.process.Environ.Map.init(allocator);
     defer environ_map.deinit();
-    try environ_map.put(GUM_BINARY_ENV, env_file);
+    try environ_map.put(PROMPT_HELPER_ENTRY_ENV, env_file);
 
-    const resolved = findAvailableGumBinary(io, &environ_map, &[_][]const u8{candidate_file}) orelse {
+    const resolved = findAvailablePromptHelperEntry(io, &environ_map, &[_][]const u8{candidate_file}) orelse {
         try std.testing.expect(false);
         return;
     };
     try std.testing.expectEqualStrings(env_file, resolved);
 }
 
-test "main/findAvailableGumBinary - falls back to bundled candidates" {
+test "main/findAvailablePromptHelperEntry - falls back to bundled candidates" {
     const allocator = std.testing.allocator;
     const io = std.testing.io;
 
-    const candidate_file = ".zig-test-gum-candidate-only";
+    const candidate_file = ".zig-test-helper-candidate-only.js";
     Dir.cwd().deleteFile(io, candidate_file) catch {};
     defer Dir.cwd().deleteFile(io, candidate_file) catch {};
 
@@ -1979,14 +1669,14 @@ test "main/findAvailableGumBinary - falls back to bundled candidates" {
     var environ_map = std.process.Environ.Map.init(allocator);
     defer environ_map.deinit();
 
-    const resolved = findAvailableGumBinary(io, &environ_map, &[_][]const u8{candidate_file}) orelse {
+    const resolved = findAvailablePromptHelperEntry(io, &environ_map, &[_][]const u8{candidate_file}) orelse {
         try std.testing.expect(false);
         return;
     };
     try std.testing.expectEqualStrings(candidate_file, resolved);
 }
 
-test "main/findAvailableGumBinary - returns null when unavailable" {
+test "main/findAvailablePromptHelperEntry - returns null when unavailable" {
     const allocator = std.testing.allocator;
     const io = std.testing.io;
     var environ_map = std.process.Environ.Map.init(allocator);
@@ -1994,8 +1684,142 @@ test "main/findAvailableGumBinary - returns null when unavailable" {
 
     try std.testing.expectEqual(
         @as(?[]const u8, null),
-        findAvailableGumBinary(io, &environ_map, &[_][]const u8{".zig-test-gum-not-found"}),
+        findAvailablePromptHelperEntry(io, &environ_map, &[_][]const u8{".zig-test-helper-not-found.js"}),
     );
+}
+
+test "main/resolveAppImagePromptHelperCandidate - derives APPDIR helper path" {
+    const allocator = std.testing.allocator;
+    var environ_map = std.process.Environ.Map.init(allocator);
+    defer environ_map.deinit();
+
+    try environ_map.put("APPDIR", "/tmp/tty-clock-timer-appdir");
+
+    var buffer: [std.fs.max_path_bytes]u8 = undefined;
+    const candidate = resolveAppImagePromptHelperCandidate(&environ_map, &buffer) orelse {
+        try std.testing.expect(false);
+        return;
+    };
+    try std.testing.expectEqualStrings(
+        "/tmp/tty-clock-timer-appdir/usr/lib/tty-clock-timer/tui/prompts/helper.js",
+        candidate,
+    );
+}
+
+test "main/collectPromptHelperCandidates - contract order is stable" {
+    const allocator = std.testing.allocator;
+    var environ_map = std.process.Environ.Map.init(allocator);
+    defer environ_map.deinit();
+
+    try environ_map.put(PROMPT_HELPER_ENTRY_ENV, "/opt/tty-clock-timer/tui/prompts/helper.js");
+    try environ_map.put("TTY_CLOCK_TUI_CWD", "/workspace/tui-runtime");
+    try environ_map.put("APPDIR", "/tmp/tty-clock-timer-appdir");
+
+    var ui_buffer: [std.fs.max_path_bytes]u8 = undefined;
+    var buffer: [std.fs.max_path_bytes]u8 = undefined;
+    const ui_cwd_candidate = resolveUiCwdPromptHelperCandidate(&environ_map, &ui_buffer);
+    const appdir_candidate = resolveAppImagePromptHelperCandidate(&environ_map, &buffer);
+    const candidates = collectPromptHelperCandidates(&environ_map, ui_cwd_candidate, appdir_candidate);
+    const slice = candidates.asSlice();
+
+    try std.testing.expectEqual(@as(usize, 6), slice.len);
+    try std.testing.expectEqualStrings("/opt/tty-clock-timer/tui/prompts/helper.js", slice[0]);
+    try std.testing.expectEqualStrings("/workspace/tui-runtime/prompts/helper.js", slice[1]);
+    try std.testing.expectEqualStrings("/tmp/tty-clock-timer-appdir/usr/lib/tty-clock-timer/tui/prompts/helper.js", slice[2]);
+    try std.testing.expectEqualStrings("tui/dist/prompts/helper.js", slice[3]);
+    try std.testing.expectEqualStrings("../tui/dist/prompts/helper.js", slice[4]);
+    try std.testing.expectEqualStrings("../../tui/dist/prompts/helper.js", slice[5]);
+}
+
+test "main/chooseWithPromptHelper - parses submitted duration" {
+    const allocator = std.testing.allocator;
+    const io = std.testing.io;
+    const helper_file = ".zig-test-prompt-helper-select.js";
+    defer Dir.cwd().deleteFile(io, helper_file) catch {};
+    try Dir.cwd().writeFile(io, .{
+        .sub_path = helper_file,
+        .data = "process.stdout.write('{\"status\":\"submitted\",\"duration_seconds\":90}\\n');\n",
+    });
+
+    var environ_map = std.process.Environ.Map.init(allocator);
+    defer environ_map.deinit();
+    try environ_map.put(PROMPT_HELPER_ENTRY_ENV, helper_file);
+
+    const entries = [_]history.Entry{
+        .{ .duration_seconds = 60, .last_used_at = 0 },
+        .{ .duration_seconds = 90, .last_used_at = 0 },
+    };
+
+    const result = try chooseWithPromptHelper(allocator, io, &environ_map, entries[0..]);
+    switch (result) {
+        .chosen => |value| try std.testing.expectEqual(@as(u32, 90), value),
+        else => try std.testing.expect(false),
+    }
+}
+
+test "main/chooseWithPromptHelper - maps helper error to failed" {
+    const allocator = std.testing.allocator;
+    const io = std.testing.io;
+    const helper_file = ".zig-test-prompt-helper-error.js";
+    defer Dir.cwd().deleteFile(io, helper_file) catch {};
+    try Dir.cwd().writeFile(io, .{
+        .sub_path = helper_file,
+        .data = "process.stdout.write('{\"status\":\"error\",\"code\":\"bad\"}\\n');\nprocess.exit(1);\n",
+    });
+
+    var environ_map = std.process.Environ.Map.init(allocator);
+    defer environ_map.deinit();
+    try environ_map.put(PROMPT_HELPER_ENTRY_ENV, helper_file);
+
+    const entries = [_]history.Entry{.{ .duration_seconds = 60, .last_used_at = 0 }};
+    const result = try chooseWithPromptHelper(allocator, io, &environ_map, entries[0..]);
+    try std.testing.expect(result == .failed);
+}
+
+test "main/deleteWithPromptHelper - maps canceled response" {
+    const allocator = std.testing.allocator;
+    const io = std.testing.io;
+    const helper_file = ".zig-test-prompt-helper-cancel.js";
+    defer Dir.cwd().deleteFile(io, helper_file) catch {};
+    try Dir.cwd().writeFile(io, .{
+        .sub_path = helper_file,
+        .data = "process.stdout.write('{\"status\":\"canceled\"}\\n');\n",
+    });
+
+    var environ_map = std.process.Environ.Map.init(allocator);
+    defer environ_map.deinit();
+    try environ_map.put(PROMPT_HELPER_ENTRY_ENV, helper_file);
+
+    const entries = [_]history.Entry{.{ .duration_seconds = 60, .last_used_at = 0 }};
+    const result = try deleteWithPromptHelper(allocator, io, &environ_map, entries[0..]);
+    try std.testing.expect(result == .canceled);
+}
+
+test "main/runSetupSoundPrompt - parses submitted sound config" {
+    const allocator = std.testing.allocator;
+    const io = std.testing.io;
+    const helper_file = ".zig-test-prompt-helper-sound.js";
+    defer Dir.cwd().deleteFile(io, helper_file) catch {};
+    try Dir.cwd().writeFile(io, .{
+        .sub_path = helper_file,
+        .data = "process.stdout.write('{\"status\":\"submitted\",\"player\":\"/usr/bin/paplay\",\"file\":\"/tmp/ding.wav\"}\\n');\n",
+    });
+
+    var environ_map = std.process.Environ.Map.init(allocator);
+    defer environ_map.deinit();
+    try environ_map.put(PROMPT_HELPER_ENTRY_ENV, helper_file);
+
+    const players = [_][]const u8{"/usr/bin/paplay"};
+    const result = try runSetupSoundPrompt(allocator, io, &environ_map, players[0..]);
+    switch (result) {
+        .chosen => |value| {
+            defer allocator.free(value.player);
+            defer allocator.free(value.file);
+            try std.testing.expectEqualStrings("/usr/bin/paplay", value.player);
+            try std.testing.expectEqualStrings("/tmp/ding.wav", value.file);
+        },
+        else => try std.testing.expect(false),
+    }
 }
 
 test "main/resolveAppImageUiCwdCandidate - derives APPDIR runtime path" {

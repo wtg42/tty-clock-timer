@@ -52,8 +52,7 @@ check_executable "${APPDIR}/usr/bin/tic" "core binary"
 
 check_exists "${APPDIR}/usr/lib/tty-clock-timer/tui/index.js" "TUI runtime entry"
 check_exists "${APPDIR}/usr/lib/tty-clock-timer/tui/libopentui.so" "TUI native library"
-check_exists "${APPDIR}/usr/lib/tty-clock-timer/tools/gum/linux-x64/gum" "bundled gum runtime tool"
-check_executable "${APPDIR}/usr/lib/tty-clock-timer/tools/gum/linux-x64/gum" "bundled gum runtime tool"
+check_exists "${APPDIR}/usr/lib/tty-clock-timer/tui/prompts/helper.js" "prompt helper bundle"
 check_exists "${APPDIR}/usr/share/applications/tty-clock-timer.desktop" "desktop file"
 check_exists "${APPDIR}/usr/share/icons/hicolor/scalable/apps/tty-clock-timer.svg" "icon"
 

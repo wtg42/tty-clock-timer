@@ -20,14 +20,13 @@
 1. `zig`、`bun`、`appimagetool` 可用
 2. `core/` 測試可跑（至少 `zig build test`）
 3. `tui/` 相依完整（`node_modules` 與 runtime entry 存在）
-4. 執行 `./packaging/appimage/scripts/fetch-gum.sh`，準備 `packaging/tools/gum/linux-x64/gum`
+4. `bun run build` 可成功產出 `tui/dist/index.js` 與 `tui/dist/prompts/helper.js`
 5. 目前 branch 的 OpenSpec tasks 與驗收紀錄已更新
 
 ## 2) Manual Fallback: Build and Package Steps
 
 ```bash
 ./packaging/appimage/scripts/build-core.sh
-./packaging/appimage/scripts/fetch-gum.sh
 APPIMAGE_VERSION=<version> ./packaging/appimage/scripts/package-appimage.sh
 APPIMAGE_VERSION=<version> ./packaging/appimage/scripts/verify-artifact.sh
 
@@ -42,9 +41,7 @@ TTY_CLOCK_TUI_ENTRY="mvp-smoke.ts" \
 
 > `APPIMAGE_VERSION` 未提供時預設為 `dev`。
 
-> `fetch-gum.sh` 會下載固定版本的 Linux x86_64 `gum` 並驗證 checksum，再安裝到 `packaging/tools/gum/linux-x64/gum`。
-
-> `package-appimage.sh` 會在打包前檢查 `packaging/tools/gum/linux-x64/gum` 是否存在且可執行，並將其打包到 AppDir 內 `usr/lib/tty-clock-timer/tools/gum/linux-x64/gum`。
+> `package-appimage.sh` 會在打包前重建 `tui/dist/`，並檢查 `tui/dist/prompts/helper.js` 是否存在，再將其打包到 AppDir 內 `usr/lib/tty-clock-timer/tui/prompts/helper.js`。
 
 ## 3) Artifact Naming and Attached Information
 

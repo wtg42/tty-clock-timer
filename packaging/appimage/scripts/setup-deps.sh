@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # setup-deps.sh - 檢查並自動下載必要的依賴工具與套件
-# 防呆機制：自動檢查 gum、appimagetool、TUI 依賴是否完整
+# 防呆機制：自動檢查 appimagetool、TUI 依賴是否完整
 set -euo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
@@ -29,25 +29,6 @@ log_warn() {
 
 log_error() {
   echo -e "${RED}[setup-deps]${NC} ✗ $*" >&2
-}
-
-# 檢查 gum
-check_gum() {
-  local gum_src="${ROOT_DIR}/packaging/tools/gum/linux-x64/gum"
-
-  if [[ -f "${gum_src}" && -x "${gum_src}" ]]; then
-    log_success "gum 已存在：${gum_src}"
-    return 0
-  fi
-
-  log_warn "gum 未找到，自動下載..."
-  if bash "${SCRIPT_DIR}/fetch-gum.sh"; then
-    log_success "gum 下載完成"
-    return 0
-  else
-    log_error "gum 下載失敗"
-    return 1
-  fi
 }
 
 # 檢查 appimagetool
@@ -123,7 +104,6 @@ main() {
 
   local failed=0
 
-  check_gum || ((failed++))
   check_appimagetool || ((failed++))
   check_tui_deps || ((failed++))
 
