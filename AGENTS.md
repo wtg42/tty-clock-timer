@@ -1,24 +1,19 @@
-# tty-clock-timer Agent 指南
+# Project Notes
 
-## OpenSpec 流程
-所有變更透過 OpenSpec 管理。指令：`/opsx:new`、`/opsx:ff`、`/opsx:apply`、`/opsx:archive`。
+## Zig Implementation Policy
 
-## Zig std 查詢（必須遵守）
-**必須先用本地 script，禁止推測或搜尋網路**：
-- `bash .opencode/skill/zig-std-index/scripts/search.sh <keyword>`
-- `bash .opencode/skill/zig-std-index/scripts/retrieve.sh <symbol>`
+- The Zig part of this project uses only the Zig standard library (`std`).
+- Do not introduce third-party Zig packages unless the user explicitly asks for it.
+- Prefer `std` solutions first when implementing, refactoring, or explaining Zig code.
 
-## 測試
-`zig test <file> --test-filter "<pattern>"`
+## LLM Working Guidance
 
-## Commit
-英文、Conventional Commits
+- When working on Zig code, assume `std` is the default and expected toolset.
+- Keep Zig changes simple and easy to read.
+- Prefer direct, explicit code over clever abstractions.
+- When explaining Zig code, mention the relevant `std` modules and why they are used.
 
-## 架構概覽
-- `core/`：Zig，計時邏輯，stdin/stdout JSON IPC
-- `tui/`：Node.js/Bun + OpenTUI，終端機渲染
-- Build：`zig build` / `bun run build`
+## Planning Guidance
 
-## 其他
-- `core/` 與 `tui/` 工具鏈獨立
-- 使用繁體中文，技術術語保留英文
+- When planning specs for frontend or TUI work, consider using the `opentui` skill to explore screen structure, interaction flow, and terminal UI behavior.
+- When planning specs for Zig backend work, consider using the `zig-std-explorer` or `zig-std-index` skill to verify `std` APIs and implementation options before writing the spec.
