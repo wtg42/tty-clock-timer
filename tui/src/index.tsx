@@ -7,17 +7,15 @@
  * - Map keyboard input to timer commands.
  * - Render countdown and finished views.
  */
-import { TextAttributes } from "@opentui/core";
-import { render, useKeyboard, useRenderer, useTimeline } from "@opentui/solid";
-import { createEffect, createSignal, onCleanup, onMount } from "solid-js";
+import { render, useRenderer } from "@opentui/solid";
+import { createEffect, createSignal, onCleanup } from "solid-js";
 
+import { App } from "./app.tsx";
 import { createCommandPlane } from "./command_plane.ts";
 import { type CommandName, type CommandResponse } from "./protocol.ts";
 import { playSound } from "./sound.ts";
 import { createTimerStore } from "./store.ts";
 import {
-  commandFromKey,
-  formatRemaining,
   type IssuedCommandRecord,
   shouldSkipByDedup,
   shouldSkipByStatus,
@@ -78,56 +76,7 @@ const connectWithRetry = async (options: {
   }
 };
 
-const FinishedView = () => {
-  let containerRef: any;
-  let titleRef: any;
-
-  const timeline = useTimeline({ autoplay: true });
-
-  onMount(() => {
-    timeline.add(
-      containerRef,
-      { opacity: 1, duration: 800, ease: "outBounce" },
-      0,
-    );
-    timeline.add(titleRef, {
-      translateY: -2,
-      duration: 100,
-      ease: "outElastic",
-    }, 800);
-    timeline.add(
-      titleRef,
-      { translateY: 0, duration: 100, ease: "outBounce" },
-      900,
-    );
-    timeline.add(
-      containerRef,
-      {
-        opacity: 0.85,
-        duration: 1000,
-        ease: "inOutQuad",
-        loop: true,
-        alternate: true,
-      },
-      1000,
-    );
-  });
-
-  return (
-    <box
-      ref={containerRef}
-      opacity={0}
-      flexDirection="column"
-      alignItems="center"
-      justifyContent="center"
-    >
-      <ascii_font ref={titleRef} font="tiny" text="TIME'S UP!" />
-      <text attributes={TextAttributes.BOLD}>Press s to restart or q to exit</text>
-    </box>
-  );
-};
-
-const App = () => {
+const RuntimeApp = () => {
   // Bind OpenTUI keyboard events and enforce graceful shutdown.
   const renderer = useRenderer();
 
@@ -224,16 +173,6 @@ const App = () => {
     }
   };
 
-  useKeyboard((key) => {
-    if (shuttingDown) return;
-    if (key.eventType !== "press") return;
-
-    const command = commandFromKey(key.name);
-    if (!command) return;
-
-    void issueCommand(command);
-  });
-
   const unsubscribeStore = store.subscribe((nextState) => setState(nextState));
   const unsubscribeEvents = adapter.onEvent((event) => {
     store.applyEvent(event);
@@ -265,52 +204,15 @@ const App = () => {
 
   // Render either countdown view or finished animation view.
   return (
-    <box
-      alignItems="center"
-      justifyContent="center"
-      flexGrow={1}
-      flexDirection="column"
-    >
-      {!state().isFinished
-        ? (
-          <box
-            justifyContent="center"
-            alignItems="center"
-            flexDirection="column"
-          >
-            <ascii_font
-              font="tiny"
-              text="TTY Clock Timer"
-            />
-            <ascii_font
-              font="slick"
-              text={formatRemaining(state().remainingSeconds)}
-              margin={1}
-            />
-            <box flexDirection="column" alignItems="center">
-              <text attributes={TextAttributes.DIM}>
-                ETA {state().etaHhmm ?? "--:--"}
-              </text>
-              <text attributes={TextAttributes.DIM}>
-                Status: {state().status}
-              </text>
-              <text attributes={TextAttributes.DIM}>
-                Keys: p pause / r resume / s reset / q quit
-              </text>
-            </box>
-          </box>
-        )
-        : <FinishedView />}
-
-      {lastCommandError()
-        ? (
-          <text attributes={TextAttributes.BOLD}>
-            Command error: {lastCommandError()}
-          </text>
-        )
-        : null}
-    </box>
+    <App
+      state={state}
+      lastCommandError={lastCommandError}
+      onCommand={(command) => {
+        if (shuttingDown) return;
+        void issueCommand(command);
+      }}
+    />
   );
 };
 
-render(() => <App />);
+render(() => <RuntimeApp />);
