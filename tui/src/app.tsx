@@ -1,4 +1,3 @@
-import { TextAttributes } from "@opentui/core";
 import { useKeyboard, useTimeline } from "@opentui/solid";
 import type { Accessor } from "solid-js";
 import { onMount } from "solid-js";
@@ -64,7 +63,9 @@ export const FinishedView = (props: FinishedViewProps) => {
       justifyContent="center"
     >
       <ascii_font ref={titleRef} font="tiny" text="TIME'S UP!" />
-      <text attributes={TextAttributes.BOLD}>Press s to restart or q to exit</text>
+      <text>
+        <strong>Press s to restart or q to exit</strong>
+      </text>
     </box>
   );
 };
@@ -100,15 +101,9 @@ export const App = (props: AppProps) => {
               margin={1}
             />
             <box flexDirection="column" alignItems="center">
-              <text attributes={TextAttributes.DIM}>
-                ETA {props.state().etaHhmm ?? "--:--"}
-              </text>
-              <text attributes={TextAttributes.DIM}>
-                Status: {props.state().status}
-              </text>
-              <text attributes={TextAttributes.DIM}>
-                Keys: p pause / r resume / s reset / q quit
-              </text>
+              <text fg="#7a7a7a">ETA {props.state().etaHhmm ?? "--:--"}</text>
+              <text fg="#7a7a7a">Status: {props.state().status}</text>
+              <text fg="#7a7a7a">Keys: p pause / r resume / s reset / q quit</text>
             </box>
           </box>
         )
@@ -116,8 +111,8 @@ export const App = (props: AppProps) => {
 
       {props.lastCommandError()
         ? (
-          <text attributes={TextAttributes.BOLD}>
-            Command error: {props.lastCommandError()}
+          <text>
+            <strong>Command error: {props.lastCommandError()}</strong>
           </text>
         )
         : null}

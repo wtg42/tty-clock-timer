@@ -6,7 +6,7 @@
  *
  * Output: tui/dist/index.js + tui/dist/prompts/helper.js + libopentui.so
  */
-import { existsSync, mkdirSync, copyFileSync } from "fs";
+import { copyFileSync, existsSync, mkdirSync, readFileSync } from "fs";
 import { join } from "path";
 import solidTransformPlugin from "@opentui/solid/bun-plugin";
 
@@ -42,6 +42,19 @@ if (!uiResult.success) {
 }
 
 console.log(`✓ TUI bundle created: ${uiResult.outputs.map((o) => o.path).join(", ")}`);
+
+const bundledIndexPath = join(DIST_DIR, "index.js");
+const bundledIndexContent = readFileSync(bundledIndexPath, "utf8");
+const coreEnvRegistrationMatches = bundledIndexContent.match(
+  /name: "OTUI_DUMP_CAPTURES"/g,
+);
+if ((coreEnvRegistrationMatches?.length ?? 0) !== 1) {
+  throw new Error(
+    `Expected exactly one OpenTUI core env registry path in bundle, found ${
+      coreEnvRegistrationMatches?.length ?? 0
+    }.`,
+  );
+}
 
 mkdirSync(PROMPTS_DIST_DIR, { recursive: true });
 
