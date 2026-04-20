@@ -1,8 +1,5 @@
-# build-compatibility Specification
+## MODIFIED Requirements
 
-## Purpose
-TBD - created by archiving change fix-io-poll-build. Update Purpose after archive.
-## Requirements
 ### Requirement: Zig master build succeeds
 系統在 Zig master 與 Zig 0.17 相容環境中 MUST 能成功編譯並執行核心 CLI，且計時核心 MUST 不依賴已移除的 `std.time.Timer`，MUST 使用應用程式執行期注入的 `std.Io` 上下文進行時間讀取，並 MUST 在用戶設定檔合併流程中使用目前 `std.json` / `std.array_hash_map` 支援的 API。
 
