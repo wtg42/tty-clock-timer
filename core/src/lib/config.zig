@@ -169,10 +169,10 @@ pub fn writeConfig(
                 var inserted_sound = false;
                 if (parsed_value.value == .object and patch.sound != null) {
                     const sound = patch.sound.?;
-                    var sound_obj = std.json.Value{ .object = .init(allocator) };
-                    try sound_obj.object.put("player", .{ .string = sound.player });
-                    try sound_obj.object.put("file", .{ .string = sound.file });
-                    try parsed_value.value.object.put("sound", sound_obj);
+                    var sound_obj = std.json.Value{ .object = .empty };
+                    try sound_obj.object.put(allocator, "player", .{ .string = sound.player });
+                    try sound_obj.object.put(allocator, "file", .{ .string = sound.file });
+                    try parsed_value.value.object.put(allocator, "sound", sound_obj);
                     inserted_sound = true;
                 }
                 if (parsed_value.value == .object) {
@@ -180,7 +180,7 @@ pub fn writeConfig(
                     if (inserted_sound) {
                         if (parsed_value.value.object.getPtr("sound")) |sound_ptr| {
                             if (sound_ptr.* == .object) {
-                                sound_ptr.object.deinit();
+                                sound_ptr.object.deinit(allocator);
                             }
                         }
                     }
