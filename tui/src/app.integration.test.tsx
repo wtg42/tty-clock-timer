@@ -67,6 +67,32 @@ describe("app integration", () => {
     view.renderer.destroy();
   });
 
+  test("renders finished screen with animation enabled", async () => {
+    const [state] = createSignal(createViewState({
+      remainingSeconds: 0,
+      status: "finished",
+      etaHhmm: null,
+      isFinished: true,
+    }));
+    const [lastCommandError] = createSignal<string | null>(null);
+
+    const view = await testRender(() => (
+      <App
+        state={state}
+        lastCommandError={lastCommandError}
+        onCommand={() => {}}
+      />
+    ), { width: 80, height: 24 });
+
+    await view.renderOnce();
+    const frame = view.captureCharFrame();
+
+    expect(frame).toContain("▀█▀ █ █▀▄▀█");
+    expect(frame).toContain("Press s to restart or q to exit");
+
+    view.renderer.destroy();
+  });
+
   test("renders error message without hiding timer contract", async () => {
     const [state] = createSignal(createViewState());
     const [lastCommandError] = createSignal<string | null>("socket_not_connected");

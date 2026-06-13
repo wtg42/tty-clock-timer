@@ -25,6 +25,12 @@ describe("ui_logic/commandFromKey", () => {
     expect(commandFromKey("p")).toBe("pause");
   });
 
+  test("commandFromKey - maps all supported control keys", () => {
+    expect(commandFromKey("r")).toBe("resume");
+    expect(commandFromKey("s")).toBe("reset");
+    expect(commandFromKey("q")).toBe("quit");
+  });
+
   test("commandFromKey - edge unknown key", () => {
     expect(commandFromKey("x")).toBeNull();
   });
@@ -37,6 +43,16 @@ describe("ui_logic/shouldSkipByStatus", () => {
 
   test("shouldSkipByStatus - edge invalid transition", () => {
     expect(shouldSkipByStatus("paused", "pause")).toBe(true);
+  });
+
+  test("shouldSkipByStatus - resume only runs while paused", () => {
+    expect(shouldSkipByStatus("paused", "resume")).toBe(false);
+    expect(shouldSkipByStatus("running", "resume")).toBe(true);
+  });
+
+  test("shouldSkipByStatus - reset and quit are not status-gated", () => {
+    expect(shouldSkipByStatus("finished", "reset")).toBe(false);
+    expect(shouldSkipByStatus("finished", "quit")).toBe(false);
   });
 });
 
@@ -52,5 +68,19 @@ describe("ui_logic/shouldSkipByDedup", () => {
     const result = shouldSkipByDedup(previous, "pause", 1_100, 250);
     expect(result.skip).toBe(true);
     expect(result.next).toBe(previous);
+  });
+
+  test("shouldSkipByDedup - allows repeated command at window boundary", () => {
+    const previous = { command: "pause" as const, at: 1_000 };
+    const result = shouldSkipByDedup(previous, "pause", 1_250, 250);
+    expect(result.skip).toBe(false);
+    expect(result.next).toEqual({ command: "pause", at: 1_250 });
+  });
+
+  test("shouldSkipByDedup - allows different command inside window", () => {
+    const previous = { command: "pause" as const, at: 1_000 };
+    const result = shouldSkipByDedup(previous, "quit", 1_100, 250);
+    expect(result.skip).toBe(false);
+    expect(result.next).toEqual({ command: "quit", at: 1_100 });
   });
 });

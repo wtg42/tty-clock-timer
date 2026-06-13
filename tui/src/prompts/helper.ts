@@ -11,6 +11,17 @@ type ErrorResult = { status: "error"; code: string };
 type PromptResult = SubmittedResult | CanceledResult | ErrorResult;
 
 type CommandName = "history-select" | "history-delete" | "setup-sound";
+type PromptDependencies = {
+  select: <T>(options: any) => Promise<T | symbol>;
+  multiselect: <T>(options: any) => Promise<T[] | symbol>;
+  text: (options: any) => Promise<string | symbol>;
+};
+
+const defaultPromptDependencies: PromptDependencies = {
+  select,
+  multiselect,
+  text,
+};
 
 const promptIo = {
   input: process.stdin,
@@ -64,12 +75,15 @@ const requireCommand = (value: unknown): CommandName => {
   throw new Error("invalid_command");
 };
 
-const runHistorySelect = async (durations: number[]): Promise<PromptResult> => {
+const runHistorySelect = async (
+  durations: number[],
+  prompts: PromptDependencies,
+): Promise<PromptResult> => {
   if (durations.length === 0) {
     return { status: "error", code: "missing_durations" };
   }
 
-  const selected = await select<number>({
+  const selected = await prompts.select<number>({
     ...promptIo,
     message: "Select timer duration",
     options: durations.map((durationSeconds) => ({
@@ -85,13 +99,16 @@ const runHistorySelect = async (durations: number[]): Promise<PromptResult> => {
   return { status: "submitted", duration_seconds: selected };
 };
 
-const runHistoryDelete = async (durations: number[]): Promise<PromptResult> => {
+const runHistoryDelete = async (
+  durations: number[],
+  prompts: PromptDependencies,
+): Promise<PromptResult> => {
   if (durations.length === 0) {
     return { status: "error", code: "missing_durations" };
   }
 
   const labels = durations.map(formatDurationLabel);
-  const selected = await multiselect<string>({
+  const selected = await prompts.multiselect<string>({
     ...promptIo,
     message: "Select durations to delete",
     options: labels.map((label) => ({ value: label, label })),
@@ -108,16 +125,19 @@ const runHistoryDelete = async (durations: number[]): Promise<PromptResult> => {
   return { status: "submitted", selected_labels: selected };
 };
 
-const runSetupSound = async (players: string[]): Promise<PromptResult> => {
+const runSetupSound = async (
+  players: string[],
+  prompts: PromptDependencies,
+): Promise<PromptResult> => {
   let player: string | symbol;
   if (players.length > 0) {
-    player = await select<string>({
+    player = await prompts.select<string>({
       ...promptIo,
       message: "Select a sound player",
       options: players.map((item) => ({ value: item, label: item })),
     });
   } else {
-    player = await text({
+    player = await prompts.text({
       ...promptIo,
       message: "Enter full player path",
       placeholder: "/usr/bin/paplay",
@@ -129,7 +149,7 @@ const runSetupSound = async (players: string[]): Promise<PromptResult> => {
     return { status: "canceled" };
   }
 
-  const file = await text({
+  const file = await prompts.text({
     ...promptIo,
     message: "Enter sound file path",
     placeholder: "/path/to/sound.wav",
@@ -147,7 +167,10 @@ const runSetupSound = async (players: string[]): Promise<PromptResult> => {
   };
 };
 
-export const runPromptCommand = async (argv: string[]): Promise<PromptResult> => {
+export const runPromptCommand = async (
+  argv: string[],
+  prompts: PromptDependencies = defaultPromptDependencies,
+): Promise<PromptResult> => {
   const args = parse<Record<string, unknown>>(argv, {
     string: ["duration-seconds", "player"],
     array: ["duration-seconds", "player"],
@@ -159,11 +182,11 @@ export const runPromptCommand = async (argv: string[]): Promise<PromptResult> =>
 
   switch (command) {
     case "history-select":
-      return runHistorySelect(durations);
+      return runHistorySelect(durations, prompts);
     case "history-delete":
-      return runHistoryDelete(durations);
+      return runHistoryDelete(durations, prompts);
     case "setup-sound":
-      return runSetupSound(players);
+      return runSetupSound(players, prompts);
   }
 };
 

@@ -7,6 +7,7 @@
     "dev": "bun run --watch src/index.tsx",
     "build": "bun run build.ts",
     "test": "bun test --preload @opentui/solid/preload",
+    "test:coverage": "bun test --preload @opentui/solid/preload --coverage",
     "test:integration": "bun test --preload @opentui/solid/preload src/app.integration.test.tsx"
   },
   "devDependencies": {
@@ -20,11 +21,11 @@
     "@babel/preset-typescript": "7.28.5",
     "@bomb.sh/args": "^0.3.1",
     "@clack/prompts": "^1.1.0",
-    "@opentui/core": "0.1.102",
-    "@opentui/solid": "0.1.102",
-    "babel-preset-solid": "1.9.10",
+    "@opentui/core": "0.4.1",
+    "@opentui/solid": "0.4.1",
+    "babel-preset-solid": "1.9.12",
     "hono": "^4.12.3",
-    "solid-js": "1.9.11"
+    "solid-js": "1.9.12"
   },
   "overrides": {
     "@babel/traverse": "7.28.5"

@@ -9,6 +9,11 @@
 import { copyFileSync, existsSync, mkdirSync, readFileSync } from "fs";
 import { join } from "path";
 import solidTransformPlugin from "@opentui/solid/bun-plugin";
+import {
+  getNativeLibraryName,
+  getNativePackageName,
+  OPENTUI_NATIVE_EXTERNALS,
+} from "./build_config.ts";
 
 const TUI_DIR = import.meta.dir;
 const DIST_DIR = join(TUI_DIR, "dist");
@@ -22,15 +27,8 @@ const uiResult = await Bun.build({
   outdir: DIST_DIR,
   target: "bun",
   plugins: [solidTransformPlugin],
-  external: [
-    // Native platform packages — resolved at runtime via dynamic import
-    "@opentui/core-linux-x64",
-    "@opentui/core-linux-arm64",
-    "@opentui/core-darwin-x64",
-    "@opentui/core-darwin-arm64",
-    "@opentui/core-win32-x64",
-    "@opentui/core-win32-arm64",
-  ],
+  // Native platform packages are resolved at runtime through the dist shim.
+  external: OPENTUI_NATIVE_EXTERNALS,
 });
 
 if (!uiResult.success) {
@@ -77,8 +75,8 @@ console.log(`✓ Prompt helper bundle created: ${promptResult.outputs.map((o) =>
 // Step 2: Copy libopentui.so to dist
 const platform = process.platform;
 const arch = process.arch;
-const nativePkg = `@opentui/core-${platform}-${arch}`;
-const soName = platform === "darwin" ? "libopentui.dylib" : "libopentui.so";
+const nativePkg = getNativePackageName(platform, arch);
+const soName = getNativeLibraryName(platform);
 const soSrc = join(TUI_DIR, "node_modules", nativePkg, soName);
 
 if (existsSync(soSrc)) {
