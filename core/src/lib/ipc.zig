@@ -40,12 +40,7 @@ pub const Command = enum {
 
     /// Parses command text into a Command enum value when recognized.
     pub fn parse(value: []const u8) ?Command {
-        inline for (std.meta.fields(Command)) |field| {
-            if (std.mem.eql(u8, value, field.name)) {
-                return @enumFromInt(field.value);
-            }
-        }
-        return null;
+        return std.meta.stringToEnum(Command, value);
     }
 
     /// Returns the command tag name as a string slice.
