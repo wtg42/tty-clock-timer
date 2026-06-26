@@ -1,0 +1,83 @@
+name: AppImage Dry Run
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches:
+      - main
+    types:
+      - opened
+      - synchronize
+      - reopened
+      - ready_for_review
+    paths:
+      - ".github/workflows/appimage-dry-run.yml"
+      - "core/**"
+      - "packaging/appimage/**"
+      - "tui/**"
+
+permissions:
+  contents: read
+
+jobs:
+  appimage-dry-run:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    env:
+      APPIMAGE_VERSION: dry-run-${{ github.run_number }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Zig
+        uses: mlugg/setup-zig@v2
+        with:
+          version: master
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install TUI dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          bun install --frozen-lockfile
+        working-directory: tui
+
+      - name: Build stage (core)
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./packaging/appimage/scripts/build-core.sh
+
+      - name: Package stage (AppImage dry-run)
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./packaging/appimage/scripts/package-appimage.sh
+
+      - name: Verify stage (artifact checks)
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./packaging/appimage/scripts/verify-artifact.sh
+
+      - name: Build artifact checksum
+        shell: bash
+        run: |
+          set -euo pipefail
+          artifact="packaging/out/appimage/tty-clock-timer-${APPIMAGE_VERSION}-linux-x86_64.AppImage"
+          sha256sum "${artifact}" > "${artifact}.sha256"
+
+      - name: Upload dry-run artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: appimage-dry-run-${{ github.run_number }}
+          path: |
+            packaging/out/appimage/*.AppImage
+            packaging/out/appimage/*.sha256
+          if-no-files-found: error
+          retention-days: 7
