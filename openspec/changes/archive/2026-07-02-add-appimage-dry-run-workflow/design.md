@@ -4,7 +4,7 @@
 
 新加入的 `workflow_dispatch` workflow 在 workflow 檔尚未存在於 default branch 前，無法直接從 GitHub Actions API 或 UI 觸發。為了讓此 PR 合併前也能驗證 AppImage package/verify，dry-run workflow 需要同時支援受限範圍的 `pull_request` trigger。
 
-AppImage package script 已包含 core build、TUI build、AppDir assembly 與 `appimagetool` packaging；verify script 已檢查 AppImage、`AppRun`、`usr/bin/tic`、TUI runtime、prompt helper、desktop file 與 icon。Dry-run workflow 應重用這些 scripts，不複製打包邏輯。
+AppImage package script 已包含 core build、TUI build、AppDir assembly 與 `appimagetool` packaging；verify script 已檢查 AppImage、`AppRun`、`usr/bin/ttc`、TUI runtime、prompt helper、desktop file 與 icon。Dry-run workflow 應重用這些 scripts，不複製打包邏輯。
 
 因為 dry-run 會使用 Zig master 執行既有 `build-core.sh`，workflow 必須同時包含目前已知的 Zig master compatibility 修正：`std.Build.args` 已不存在，`std.meta.fields` 也已成為 compile-time error。
 
@@ -15,7 +15,7 @@ AppImage package script 已包含 core build、TUI build、AppDir assembly 與 `
 - 提供手動觸發的 Ubuntu AppImage package/verify dry-run。
 - 提供 merge 前 PR AppImage package/verify dry-run，僅在影響 workflow、core、packaging 或 TUI 的路徑變更時執行。
 - 讓維護者可以下載 dry-run AppImage artifact 檢查，不建立 GitHub Release。
-- 讓 dry-run 使用的 core build path 可在 Zig master 下成功編譯出 `tic`。
+- 讓 dry-run 使用的 core build path 可在 Zig master 下成功編譯出 `ttc`。
 - 保持正式 tag-driven release workflow 不變。
 
 **Non-Goals:**
@@ -23,7 +23,7 @@ AppImage package script 已包含 core build、TUI build、AppDir assembly 與 `
 - 不新增 tag trigger 或 branch push trigger。
 - 不修改 `package-appimage.sh`、`verify-artifact.sh` 或 release upload 流程。
 - 不在 dry-run 中執行 `gh release` 或要求 write permission。
-- 不重新設計 `tic` 命名契約。
+- 不重新設計 `ttc` 命名契約。
 
 ## Decisions
 
@@ -40,7 +40,7 @@ AppImage package script 已包含 core build、TUI build、AppDir assembly 與 `
   Dry-run 產物保留 7 天供下載檢查，但不污染 GitHub Release assets。
 
 - **Decision: 同步修正 Zig master core build blocker。**  
-  Dry-run workflow 的核心價值是跑完整 package/verify；若 core build 仍卡在已移除的 Zig std API，workflow 只會重現已知失敗。使用 `Run.addPassthruArgs()` 與 `std.meta.stringToEnum()` 做最小修正，保留 binary 名稱 `tic`。
+  Dry-run workflow 的核心價值是跑完整 package/verify；若 core build 仍卡在已移除的 Zig std API，workflow 只會重現已知失敗。使用 `Run.addPassthruArgs()` 與 `std.meta.stringToEnum()` 做最小修正，保留 binary 名稱 `ttc`。
 
 ## Risks / Trade-offs
 

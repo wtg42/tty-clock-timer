@@ -10,7 +10,7 @@
 #### Scenario: 手動啟動 AppImage dry-run
 - **WHEN** 維護者透過 GitHub Actions 手動觸發 AppImage dry-run workflow
 - **THEN** workflow MUST 在 Ubuntu runner 執行 AppImage build、package 與 verify
-- **AND** workflow 的 core build stage MUST 能在 Zig master 下編譯出 `tic`
+- **AND** workflow 的 core build stage MUST 能在 Zig master 下編譯出 `ttc`
 - **AND** workflow MUST NOT 建立或更新 GitHub Release
 - **AND** workflow MUST NOT 需要 `contents: write` permission
 

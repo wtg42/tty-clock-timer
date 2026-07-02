@@ -13,7 +13,7 @@
 
 ## 3. Zig Compatibility
 
-- [x] 3.1 更新 `core/build.zig`，以 `run_cmd.addPassthruArgs()` 取代 `std.Build.args` 分支，並保留 executable name `tic`。
+- [x] 3.1 更新 `core/build.zig`，以 `run_cmd.addPassthruArgs()` 取代 `std.Build.args` 分支，並保留 executable name `ttc`。
 - [x] 3.2 更新 `core/src/lib/ipc.zig`，以 `std.meta.stringToEnum(Command, value)` 取代 `std.meta.fields(Command)` 手動 parsing。
 - [x] 3.3 在 `core/` 執行 `zig build`、`zig build test` 與 Linux x86_64 cross compile。
 
