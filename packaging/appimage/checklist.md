@@ -14,7 +14,7 @@
 
 ## C. Bundled Assets Presence
 
-- [ ] `AppDir/usr/bin/tic` 存在且可執行
+- [ ] `AppDir/usr/bin/ttc` 存在且可執行
 - [ ] `AppDir/usr/lib/tty-clock-timer/tui/index.js` 存在
 - [ ] `AppDir/usr/lib/tty-clock-timer/tui/prompts/helper.js` 存在
 - [ ] `AppDir/usr/lib/tty-clock-timer/tui/libopentui.so` 存在

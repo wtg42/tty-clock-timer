@@ -109,7 +109,7 @@ When CI or environment issues make the tag-driven flow unavailable, maintainers 
 ```
 
 - Fixed input: `core/` source tree
-- Fixed output: `packaging/out/appimage/stage/usr/bin/tic`
+- Fixed output: `packaging/out/appimage/stage/usr/bin/ttc`
 - Note: `package-appimage.sh` runs this step automatically; this command is mainly for isolated core artifact checks.
 
 ### 2) Package AppImage Artifact

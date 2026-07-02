@@ -71,8 +71,8 @@ install -d "${APPDIR}/usr/share/applications"
 install -d "${APPDIR}/usr/share/icons/hicolor/scalable/apps"
 
 # 安裝二進檔與資源
-if [[ ! -f "${STAGE_DIR}/usr/bin/tic" ]]; then
-  echo "[error] Core 二進檔不存在：${STAGE_DIR}/usr/bin/tic" >&2
+if [[ ! -f "${STAGE_DIR}/usr/bin/ttc" ]]; then
+  echo "[error] Core 二進檔不存在：${STAGE_DIR}/usr/bin/ttc" >&2
   exit 1
 fi
 
@@ -81,7 +81,7 @@ if [[ ! -d "${TUI_SRC_DIR}/dist" ]]; then
   exit 1
 fi
 
-install -m 0755 "${STAGE_DIR}/usr/bin/tic" "${APPDIR}/usr/bin/tic"
+install -m 0755 "${STAGE_DIR}/usr/bin/ttc" "${APPDIR}/usr/bin/ttc"
 cp -R "${TUI_SRC_DIR}/dist/." "${APPDIR}/usr/lib/tty-clock-timer/tui/"
 
 install -m 0644 "${ASSETS_DIR}/tty-clock-timer.desktop" "${APPDIR}/usr/share/applications/tty-clock-timer.desktop"
@@ -100,7 +100,7 @@ APPDIR="$(cd -- "$(dirname -- "$0")" && pwd)"
 export TTY_CLOCK_TUI_CWD="${TTY_CLOCK_TUI_CWD:-${APPDIR}/usr/lib/tty-clock-timer/tui}"
 export TTY_CLOCK_TUI_ENTRY="${TTY_CLOCK_TUI_ENTRY:-index.js}"
 
-exec "${APPDIR}/usr/bin/tic" "$@"
+exec "${APPDIR}/usr/bin/ttc" "$@"
 EOF
 chmod 0755 "${APPDIR}/AppRun"
 

@@ -36,7 +36,7 @@ Built with AI-assisted coding tools.
 ```text
 ┌────────────────────────────────────────────────────────────────────┐
 │                         User / Terminal                            │
-│                  tic --minutes 25 / --seconds 90                   │
+│                  ttc --minutes 25 / --seconds 90                   │
 └────────────────────────────────────────────────────────────────────┘
                                │
                                ▼
@@ -133,19 +133,19 @@ bun run dev
 
 `tty-clock-timer` ships Linux x86_64 AppImage releases, providing a standalone and portable binary for end users.
 
-After downloading the AppImage, make it executable with `chmod +x` and optionally rename it to `tic` so command examples and help output stay consistent:
+After downloading the AppImage, make it executable with `chmod +x` and optionally rename it to `ttc` so command examples and help output stay consistent:
 
 ```bash
 chmod +x tty-clock-timer-<version>-linux-x86_64.AppImage
-mv tty-clock-timer-<version>-linux-x86_64.AppImage tic
-./tic --help
+mv tty-clock-timer-<version>-linux-x86_64.AppImage ttc
+./ttc --help
 ```
 
 ### Runtime Artifact Contract
 
 AppImage and development mode share a unified **Core-TUI artifact contract**:
 
-- **Core binary**: `usr/bin/tic` (the only entrypoint inside the AppImage)
+- **Core binary**: `usr/bin/ttc` (the only entrypoint inside the AppImage)
 - **TUI runtime root**: `usr/lib/tty-clock-timer/tui` (used by core as the subprocess working directory)
 - **TUI entry file**: `index.js` (overridable via `TTY_CLOCK_TUI_ENTRY`)
 - **AppRun wrapper**: sets env vars, then delegates to core instead of launching the UI directly

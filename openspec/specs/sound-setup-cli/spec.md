@@ -1,7 +1,7 @@
 # sound-setup-cli Specification
 
 ## Purpose
-TBD - synced from change sound-setup.
+定義音效設定 CLI 流程，確保 `--setup-sound` 透過 prompt helper 完成互動並維持可驗證的設定寫入語意。
 
 ## Requirements
 
@@ -14,10 +14,10 @@ TBD - synced from change sound-setup.
 - **AND** 系統 MUST 回報可理解的錯誤訊息
 
 ### Requirement: --setup-sound 互動設定模式
-系統 MUST 支援 `tic --setup-sound` 參數，進入音效設定模式。此模式 MUST NOT 啟動計時器 TUI，而是透過 prompt helper 互動引導用戶完成音效設定並寫入設定檔後退出。
+系統 MUST 支援 `ttc --setup-sound` 參數，進入音效設定模式。此模式 MUST NOT 啟動計時器 TUI，而是透過 prompt helper 互動引導用戶完成音效設定並寫入設定檔後退出。
 
 #### Scenario: 正常完成設定
-- **WHEN** 用戶執行 `tic --setup-sound`，選擇播放器並輸入有效音效檔路徑
+- **WHEN** 用戶執行 `ttc --setup-sound`，選擇播放器並輸入有效音效檔路徑
 - **THEN** 系統 MUST 將播放器路徑與音效檔路徑寫入設定檔，並顯示成功訊息
 
 #### Scenario: 偵測到系統播放器

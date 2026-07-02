@@ -77,7 +77,7 @@ const UiCwdCandidates = struct {
 
 /// Returns the CLI help text shown for onboarding and usage reminders.
 fn helpMessage() []const u8 {
-    return "Usage: tic [OPTIONS]\n" ++
+    return "Usage: ttc [OPTIONS]\n" ++
         "\n" ++
         "Options:\n" ++
         "  -m, --minutes <num>    Set countdown minutes\n" ++
@@ -88,11 +88,11 @@ fn helpMessage() []const u8 {
         "  -h, --help             Show this help message\n" ++
         "\n" ++
         "Example:\n" ++
-        "  tic --minutes 25\n" ++
-        "  tic -s 90\n" ++
-        "  tic --setup-sound\n" ++
-        "  tic list\n" ++
-        "  tic list --delete\n";
+        "  ttc --minutes 25\n" ++
+        "  ttc -s 90\n" ++
+        "  ttc --setup-sound\n" ++
+        "  ttc list\n" ++
+        "  ttc list --delete\n";
 }
 
 /// Maps internal timer state to the status string used by IPC payloads.
@@ -1538,7 +1538,7 @@ test "configErrorMessage - mapping" {
 
 test "helpMessage - stable output" {
     try std.testing.expectEqualStrings(
-        "Usage: tic [OPTIONS]\n\nOptions:\n  -m, --minutes <num>    Set countdown minutes\n  -s, --seconds <num>    Set countdown seconds\n      --setup-sound      Configure sound player + file\n      list               Select from history durations\n      list --delete      Delete history durations\n  -h, --help             Show this help message\n\nExample:\n  tic --minutes 25\n  tic -s 90\n  tic --setup-sound\n  tic list\n  tic list --delete\n",
+        "Usage: ttc [OPTIONS]\n\nOptions:\n  -m, --minutes <num>    Set countdown minutes\n  -s, --seconds <num>    Set countdown seconds\n      --setup-sound      Configure sound player + file\n      list               Select from history durations\n      list --delete      Delete history durations\n  -h, --help             Show this help message\n\nExample:\n  ttc --minutes 25\n  ttc -s 90\n  ttc --setup-sound\n  ttc list\n  ttc list --delete\n",
         helpMessage(),
     );
 }

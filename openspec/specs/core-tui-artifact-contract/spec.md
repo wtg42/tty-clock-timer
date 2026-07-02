@@ -6,7 +6,7 @@ TBD - created by archiving change appimage-packaging-foundation. Update Purpose 
 ## Requirements
 
 ### Requirement: Core 與 TUI runtime artifact contract 必須明確
-系統 MUST 以文件化規範定義 core 與 TUI runtime 的 artifact contract，至少涵蓋執行入口、必要資產、路徑解析規則與啟動參數介面。TUI artifact 從原始碼目錄結構變更為 bundle 產物結構（JS bundle + `libopentui.so`），入口由 `src/index.tsx` 變更為 bundled JS 檔案。
+系統 MUST 以文件化規範定義 core 與 TUI runtime 的 artifact contract，至少涵蓋執行入口、必要資產、路徑解析規則與啟動參數介面。TUI artifact 從原始碼目錄結構變更為 bundle 產物結構（JS bundle + `libopentui.so`），入口由 `src/index.tsx` 變更為 bundled JS 檔案。AppImage 內 core binary contract path MUST 為 `usr/bin/ttc`，且 MUST NOT 提供 `usr/bin/tic` 作為相容 alias。
 
 #### Scenario: 依契約解析 runtime artifact
 - **WHEN** core 準備啟動 TUI runtime
