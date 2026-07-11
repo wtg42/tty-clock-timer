@@ -6,12 +6,12 @@
 
 Workflow與final job名稱不得任意變更：
 
-| Workflow | Final job | GitHub UI預期context |
+| Workflow | Final job | REST required context |
 | --- | --- | --- |
-| `AppImage Dry Run` | `appimage-required` | `AppImage Dry Run / appimage-required` |
-| `macOS Dry Run` | `macos-required` | `macOS Dry Run / macos-required` |
+| `AppImage Dry Run` | `appimage-required` | `appimage-required` |
+| `macOS Dry Run` | `macos-required` | `macos-required` |
 
-設定branch protection前，必須以實際PR的`gh pr checks`或Checks API確認GitHub註冊的context字串；REST API的required context值以GitHub實際回傳為準，不得只猜測UI顯示名稱。
+PR #3於2026-07-11實測確認GitHub Checks API註冊的job names為`appimage-required`與`macos-required`，兩者在commit `7850608`均成功。GitHub UI會另外顯示所屬workflow；REST branch protection的required context使用job name。未來仍必須以實際PR的`gh pr checks`或Checks API確認，不得只猜測UI顯示名稱。
 
 兩個workflows會在每個目標為`main`的PR建立final job。Detector依路徑決定是否執行heavy platform job；docs-only可略過heavy job，但final gate仍會出現。
 
@@ -92,6 +92,21 @@ gh pr view <pr-number> --repo wtg42/tty-clock-timer --json mergeable,mergeStateS
 - 兩個checks成功且branch最新時可正常merge。
 - PR workflows維持`contents: read`，不得因required gate取得write permission。
 
+### Applied State (2026-07-11)
+
+經使用者明確授權後，`main`已套用並由REST API重新讀取確認：
+
+- protected：`true`
+- required contexts：`appimage-required`、`macos-required`（GitHub Actions app id `15368`）
+- strict up-to-date：`true`
+- required approving reviews：`0`
+- enforce admins：`true`
+- allow force pushes：`false`
+- allow deletions：`false`
+- PR workflows permissions：`contents: read`
+
+PR #3在套用後仍為draft，最新遠端head `7850608`的兩個required checks均成功，API回報`mergeable: MERGEABLE`與`mergeStateStatus: CLEAN`。後續task狀態文件commit仍須重新通過required checks。
+
 ## Renaming a Required Job
 
 不可先刪除或更名舊job。安全順序：
@@ -111,3 +126,9 @@ gh pr view <pr-number> --repo wtg42/tty-clock-timer --json mergeable,mergeStateS
 4. 重新啟用strict required checks與admin enforcement。
 
 Rollback不得使用force push、直接修改`main`或保留永久admin bypass作為正常流程。
+
+完整移除protection的緊急rollback命令（執行前仍需明確授權）：
+
+```bash
+gh api --method DELETE repos/wtg42/tty-clock-timer/branches/main/protection
+```

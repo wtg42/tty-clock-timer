@@ -43,10 +43,10 @@ Linux job在 package 前依序執行 locked dependency install、`zig build test
 
 workflow 與 final job的 `name` MUST 固定，例如：
 
-- `AppImage Dry Run / appimage-required`
-- `macOS Dry Run / macos-required`
+- REST context `appimage-required`（GitHub UI所屬workflow：`AppImage Dry Run`）
+- REST context `macos-required`（GitHub UI所屬workflow：`macOS Dry Run`）
 
-Branch protection只 required這兩個 final contexts，不直接綁會被條件略過的 heavy jobs，也不綁容易因 step 文案變動的名稱。未來更名前 MUST 先遷移 repository settings，避免所有 PR 卡住。
+Branch protection只 required這兩個 final job contexts，不直接綁會被條件略過的 heavy jobs，也不綁容易因 step 文案變動的名稱。PR #3已實測Checks API以job name註冊context。未來更名前 MUST 先遷移 repository settings，避免所有 PR 卡住。
 
 ### 5. Branch protection 分 bootstrap 與 enforcement
 
