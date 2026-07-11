@@ -35,7 +35,7 @@
 
 ## 6. GitHub Bootstrap 與 Enforcement
 
-- [ ] 6.1 在使用者授權publish後，commit/push feature branch並建立PR，使新的final check contexts首次註冊
+- [x] 6.1 在使用者授權publish後，commit/push feature branch並建立PR，使新的final check contexts首次註冊
 - [ ] 6.2 等待並確認`AppImage Dry Run / appimage-required`與`macOS Dry Run / macos-required`均在GitHub出現且成功
 - [ ] 6.3 在取得使用者對外部設定變更的明確授權後，為`main`啟用require pull request、兩個required contexts、strict up-to-date、admin enforcement、無bypass actor與0 required approvals
 - [ ] 6.4 透過GitHub API與PR mergeability狀態驗證缺失/失敗/過期checks會阻止merge，綠燈且最新branch可正常merge
