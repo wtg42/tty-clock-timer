@@ -100,11 +100,11 @@ Built with AI-assisted coding tools.
 ## Requirements
 
 ### Running a packaged release
-- **bun** ([https://bun.sh](https://bun.sh)) - required for the TUI runtime
-- **Platforms**: Linux x86_64 AppImage or macOS Apple Silicon (`arm64`) tarball
+- **bun** ([https://bun.sh](https://bun.sh)) - required on `PATH` for the TUI runtime; it is not bundled in either release artifact
+- **Platforms**: Linux x86_64 AppImage and macOS Apple Silicon (`arm64`) tarball
 
 ### Development Environment
-- **zig** nightly (`0.16.0-dev`) - [https://ziglang.org/download](https://ziglang.org/download)
+- **zig** master / `0.17`-compatible toolchain - [https://ziglang.org/download](https://ziglang.org/download)
 - **bun** - [https://bun.sh](https://bun.sh)
 
 ## Quick Start
@@ -131,9 +131,18 @@ bun run dev
 
 ## Release and Distribution
 
+### Supported release artifacts
+
+| Platform | Artifact | Runtime prerequisite | Not included |
+| --- | --- | --- | --- |
+| Linux x86_64 | AppImage | Bun on `PATH` | Bun, non-x86_64 Linux builds |
+| macOS Apple Silicon (`arm64`) | `.tar.gz` archive | Bun on `PATH` | Intel Mac, Universal Binary, Homebrew, codesign, notarization |
+
+Pushing a valid version tag builds, packages, and verifies both artifacts. GitHub creates or updates the matching Release only after both platforms succeed, and publishes each artifact with its SHA-256 checksum.
+
 ### Linux x86_64 AppImage
 
-`tty-clock-timer` ships Linux x86_64 AppImage releases, providing a standalone and portable binary for end users.
+`tty-clock-timer` ships Linux x86_64 AppImage releases as a portable packaged distribution. Install Bun separately and ensure `bun` is available on `PATH` before starting `ttc`.
 
 After downloading the AppImage, make it executable with `chmod +x` and optionally rename it to `ttc` so command examples and help output stay consistent:
 

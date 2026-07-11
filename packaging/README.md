@@ -26,11 +26,13 @@ packaging/
 
 | Tool | Version | Description |
 |------|------|------|
-| `zig` | 0.16+ | Builds the core binary |
-| `bun` | 1.x | Required on host (used to install/build TUI bundle during packaging) |
+| `zig` | master / 0.17-compatible | Builds the core binary |
+| `bun` | 1.x | Required to install/build the TUI bundle and at runtime for both release artifacts; it is not embedded |
 | `appimagetool` | - | Packages AppDir into `.AppImage` (auto-discovered or auto-downloaded by scripts) |
 
-macOS packaging additionally requires a native Apple Silicon host (`Darwin arm64`). Its release artifact still requires Bun at runtime; Bun is not embedded.
+macOS packaging additionally requires a native Apple Silicon host (`Darwin arm64`). Linux x86_64 AppImage and macOS arm64 tarball releases both require Bun at runtime.
+
+For a valid version tag, the release workflow builds, packages, and verifies both platforms before publishing either artifact. The resulting GitHub Release contains the Linux AppImage, macOS tarball, and a SHA-256 checksum for each.
 
 You can download `appimagetool` from [GitHub Releases](https://github.com/AppImage/appimagetool/releases).
 
