@@ -44,7 +44,7 @@ Built with AI-assisted coding tools.
 │                         Zig Core (core/)                           │
 │ 1) parse args                                                      │
 │ 2) init countdown timer                                            │
-│ 3) setup unique Unix socket server (/tmp/tty-clock-timer-*.sock)   │
+│ 3) setup unique Unix socket server (TMPDIR, then /tmp fallback)    │
 │ 4) spawn TUI process (bun run <entry> -- --socket-path <unique>)   │
 └────────────────────────────────────────────────────────────────────┘
                      │                               │
@@ -99,9 +99,9 @@ Built with AI-assisted coding tools.
 
 ## Requirements
 
-### Running the AppImage
+### Running a packaged release
 - **bun** ([https://bun.sh](https://bun.sh)) - required for the TUI runtime
-- **Platform**: Linux x86_64
+- **Platforms**: Linux x86_64 AppImage or macOS Apple Silicon (`arm64`) tarball
 
 ### Development Environment
 - **zig** nightly (`0.16.0-dev`) - [https://ziglang.org/download](https://ziglang.org/download)
@@ -129,7 +129,9 @@ bun install
 bun run dev
 ```
 
-## AppImage Release and Distribution
+## Release and Distribution
+
+### Linux x86_64 AppImage
 
 `tty-clock-timer` ships Linux x86_64 AppImage releases, providing a standalone and portable binary for end users.
 
@@ -152,9 +154,30 @@ AppImage and development mode share a unified **Core-TUI artifact contract**:
 
 For full contract details, see [packaging/appimage/artifact-contract.md](./packaging/appimage/artifact-contract.md).
 
+### macOS Apple Silicon
+
+macOS releases are versioned tarballs for Apple Silicon only. They require Bun at runtime and must be kept as a complete extracted directory:
+
+```bash
+shasum -a 256 -c tty-clock-timer-<version>-macos-arm64.tar.gz.sha256
+tar -xzf tty-clock-timer-<version>-macos-arm64.tar.gz
+./tty-clock-timer-<version>-macos-arm64/bin/ttc --help
+./tty-clock-timer-<version>-macos-arm64/bin/ttc --seconds 90
+```
+
+Do not copy only `bin/ttc`; the launcher resolves the Zig core, TUI bundle, prompt helper, and `libopentui.dylib` relative to the extracted directory. The macOS MVP does not include Bun, Intel Mac support, a Universal Binary, Homebrew packaging, codesign, or notarization.
+
+Because the archive is not signed or notarized, macOS may attach a quarantine attribute and block it. First verify the SHA-256 checksum and confirm the archive came from the expected GitHub Release. Only for an artifact you trust, remove quarantine from the extracted directory:
+
+```bash
+xattr -dr com.apple.quarantine tty-clock-timer-<version>-macos-arm64
+```
+
+For the full layout and packaging commands, see [packaging/macos/](./packaging/macos/).
+
 ### Unix Socket IPC and Dynamic Socket Path
 
-Core and TUI communicate bidirectionally over Unix Domain Sockets. To support multiple concurrent instances without collisions, **core generates a unique socket path on every run** (`/tmp/tty-clock-timer-{random_hex}.sock`) and passes it into the TUI subprocess via CLI arguments.
+Core and TUI communicate bidirectionally over Unix Domain Sockets. To support multiple concurrent instances without collisions, **core generates a unique socket path on every run**. It prefers a valid `TMPDIR` path and falls back to `/tmp/tty-clock-timer-{random_hex}.sock` when the first candidate is empty, unavailable, or too long for a Unix socket address.
 
 For detailed behavior, see [openspec/specs/unix-socket-ipc-bridge/spec.md](./openspec/specs/unix-socket-ipc-bridge/spec.md).
 
@@ -168,3 +191,14 @@ The AppImage packaging workflow has fixed input/output interfaces:
 4. **MVP smoke tests** (optional): validate behavior with `mvp-smoke.ts` or `timer-smoke.ts`
 
 For full steps and release playbook details, see the [packaging/appimage/](./packaging/appimage/) directory.
+
+### macOS Build and Verification
+
+The macOS workflow has matching build/package/verify interfaces:
+
+1. **Build and stage runtime**: `MACOS_VERSION=<version> ./packaging/macos/scripts/build-runtime.sh`
+2. **Package tarball + checksum**: `MACOS_VERSION=<version> ./packaging/macos/scripts/package-macos.sh`
+3. **Verify layout, dylib, IPC, and controlled exit**: `MACOS_VERSION=<version> ./packaging/macos/scripts/verify-artifact.sh`
+4. **Verify failure diagnostics**: `MACOS_VERSION=<version> ./packaging/macos/scripts/test-failures.sh`
+
+These scripts intentionally reject non-Darwin and non-arm64 hosts.

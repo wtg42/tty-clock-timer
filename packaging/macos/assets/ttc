@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+ARCHIVE_ROOT="$(cd -- "${SCRIPT_DIR}/.." && pwd)"
+CORE="${ARCHIVE_ROOT}/libexec/tty-clock-timer/ttc"
+TUI_ROOT="${ARCHIVE_ROOT}/lib/tty-clock-timer/tui"
+
+if ! command -v bun >/dev/null 2>&1; then
+  echo "Error: Bun is required to run ttc on macOS. Install Bun and ensure it is available in PATH." >&2
+  exit 1
+fi
+
+if [[ ! -x "${CORE}" ]]; then
+  echo "Error: Missing executable Zig core: ${CORE}" >&2
+  exit 1
+fi
+
+for artifact in \
+  "${TUI_ROOT}/index.js" \
+  "${TUI_ROOT}/prompts/helper.js" \
+  "${TUI_ROOT}/libopentui.dylib" \
+  "${TUI_ROOT}/node_modules/@opentui/core-darwin-arm64/index.ts"; do
+  if [[ ! -f "${artifact}" ]]; then
+    echo "Error: Missing macOS runtime artifact: ${artifact}" >&2
+    exit 1
+  fi
+done
+
+export TTY_CLOCK_TUI_CWD="${TTY_CLOCK_TUI_CWD:-${TUI_ROOT}}"
+export TTY_CLOCK_TUI_ENTRY="${TTY_CLOCK_TUI_ENTRY:-index.js}"
+export TTY_CLOCK_PROMPT_HELPER_ENTRY="${TTY_CLOCK_PROMPT_HELPER_ENTRY:-${TUI_ROOT}/prompts/helper.js}"
+
+exec "${CORE}" "$@"
+

@@ -1,4 +1,4 @@
-name: AppImage Dry Run
+name: macOS Dry Run
 
 on:
   workflow_dispatch:
@@ -14,8 +14,8 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  detect-appimage-changes:
-    name: detect-appimage-changes
+  detect-macos-changes:
+    name: detect-macos-changes
     runs-on: ubuntu-24.04
     outputs:
       required: ${{ steps.detect.outputs.required }}
@@ -25,7 +25,7 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Detect Linux-relevant changes
+      - name: Detect macOS-relevant changes
         id: detect
         shell: bash
         env:
@@ -37,19 +37,26 @@ jobs:
           if [[ "${EVENT_NAME}" == "workflow_dispatch" ]]; then
             echo "required=true" >> "${GITHUB_OUTPUT}"
           else
-            ./.github/scripts/detect-relevant-changes.sh "${BASE_SHA}" "${HEAD_SHA}" linux
+            ./.github/scripts/detect-relevant-changes.sh "${BASE_SHA}" "${HEAD_SHA}" macos
           fi
 
-  appimage-dry-run:
-    name: appimage-heavy
-    needs: detect-appimage-changes
-    if: needs.detect-appimage-changes.outputs.required == 'true'
-    runs-on: ubuntu-24.04
+  macos-dry-run:
+    name: macos-heavy
+    needs: detect-macos-changes
+    if: needs.detect-macos-changes.outputs.required == 'true'
+    runs-on: macos-15
     env:
-      APPIMAGE_VERSION: dry-run-${{ github.run_number }}
+      MACOS_VERSION: dry-run-${{ github.run_number }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      - name: Verify Apple Silicon runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(uname -s)" = "Darwin"
+          test "$(uname -m)" = "arm64"
 
       - name: Setup Zig
         uses: mlugg/setup-zig@v2
@@ -73,44 +80,36 @@ jobs:
         working-directory: tui
         run: bun test --preload @opentui/solid/preload
 
-      - name: Build Linux core
-        run: ./packaging/appimage/scripts/build-core.sh
+      - name: Build and package macOS arm64 artifact
+        run: ./packaging/macos/scripts/package-macos.sh
 
-      - name: Package AppImage
-        run: ./packaging/appimage/scripts/package-appimage.sh
+      - name: Verify package and runtime smoke test
+        run: ./packaging/macos/scripts/verify-artifact.sh
 
-      - name: Verify AppImage artifact
-        run: ./packaging/appimage/scripts/verify-artifact.sh
+      - name: Verify packaging failure diagnostics
+        run: ./packaging/macos/scripts/test-failures.sh
 
-      - name: Build artifact checksum
-        shell: bash
-        run: |
-          set -euo pipefail
-          artifact="packaging/out/appimage/tty-clock-timer-${APPIMAGE_VERSION}-linux-x86_64.AppImage"
-          sha256sum "${artifact}" > "${artifact}.sha256"
-
-      - name: Upload dry-run artifact
+      - name: Upload macOS dry-run artifact
         uses: actions/upload-artifact@v4
         with:
-          name: appimage-dry-run-${{ github.run_number }}
+          name: macos-dry-run-${{ github.run_number }}
           path: |
-            packaging/out/appimage/*.AppImage
-            packaging/out/appimage/*.sha256
+            packaging/out/macos/*.tar.gz
+            packaging/out/macos/*.tar.gz.sha256
           if-no-files-found: error
-          retention-days: 7
 
-  appimage-required:
-    name: appimage-required
-    needs: [detect-appimage-changes, appimage-dry-run]
+  macos-required:
+    name: macos-required
+    needs: [detect-macos-changes, macos-dry-run]
     if: always()
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout gate script
         uses: actions/checkout@v4
 
-      - name: Enforce Linux validation result
+      - name: Enforce macOS validation result
         env:
-          DETECT_RESULT: ${{ needs.detect-appimage-changes.result }}
-          REQUIRED: ${{ needs.detect-appimage-changes.outputs.required }}
-          HEAVY_RESULT: ${{ needs.appimage-dry-run.result }}
-        run: ./.github/scripts/validate-required-gate.sh "${DETECT_RESULT}" "${REQUIRED}" "${HEAVY_RESULT}" Linux
+          DETECT_RESULT: ${{ needs.detect-macos-changes.result }}
+          REQUIRED: ${{ needs.detect-macos-changes.outputs.required }}
+          HEAVY_RESULT: ${{ needs.macos-dry-run.result }}
+        run: ./.github/scripts/validate-required-gate.sh "${DETECT_RESULT}" "${REQUIRED}" "${HEAVY_RESULT}" macOS
