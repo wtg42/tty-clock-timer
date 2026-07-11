@@ -1,4 +1,4 @@
-name: Tag Driven AppImage Release
+name: Tag Driven Cross-Platform Release
 
 on:
   push:
@@ -6,16 +6,14 @@ on:
       - "v*"
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  release-appimage:
+  build-linux:
     runs-on: ubuntu-24.04
-    permissions:
-      contents: write
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Setup Zig
         uses: mlugg/setup-zig@v2
@@ -27,158 +25,160 @@ jobs:
         with:
           bun-version: latest
 
-      - name: Install TUI dependencies
-        shell: bash
-        run: |
-          set -euo pipefail
-          bun install --frozen-lockfile
+      - name: Install locked TUI dependencies
         working-directory: tui
+        run: bun install --frozen-lockfile
 
-      - name: Extract and validate release version
-        id: version
+      - name: Validate release version
         shell: bash
         run: |
           set -euo pipefail
-
-          tag="${GITHUB_REF_NAME}"
-          if [[ ! "${tag}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([-.+][0-9A-Za-z.-]+)?$ ]]; then
-            echo "::error title=Invalid release tag::Tag '${tag}' must match v<major>.<minor>.<patch> (optional prerelease/build suffix)."
+          if [[ ! "${GITHUB_REF_NAME}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([-.+][0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error title=Invalid release tag::Tag '${GITHUB_REF_NAME}' must match v<major>.<minor>.<patch>."
             exit 1
           fi
-
-          version="${tag}"
-          artifact="tty-clock-timer-${version}-linux-x86_64.AppImage"
-
-          {
-            echo "tag=${tag}"
-            echo "version=${version}"
-            echo "artifact=${artifact}"
-          } >> "${GITHUB_OUTPUT}"
 
       - name: Prepare appimagetool
         shell: bash
         run: |
           set -euo pipefail
-
           mkdir -p packaging/tools
           curl -fsSL -o packaging/tools/appimagetool.AppImage "https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage"
           chmod 0755 packaging/tools/appimagetool.AppImage
 
-      - name: Build stage (core)
+      - name: Build Linux core
+        run: ./packaging/appimage/scripts/build-core.sh
+
+      - name: Package Linux AppImage
+        env:
+          APPIMAGE_VERSION: ${{ github.ref_name }}
+        run: ./packaging/appimage/scripts/package-appimage.sh
+
+      - name: Verify Linux AppImage
+        env:
+          APPIMAGE_VERSION: ${{ github.ref_name }}
+        run: ./packaging/appimage/scripts/verify-artifact.sh
+
+      - name: Build Linux checksum and metadata
         shell: bash
         run: |
           set -euo pipefail
-
-          if ! ./packaging/appimage/scripts/build-core.sh; then
-            echo "::error title=Release stage failed::stage=build"
-            exit 1
-          fi
-
-      - name: Package stage (AppImage)
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          if ! APPIMAGE_VERSION="${{ steps.version.outputs.version }}" ./packaging/appimage/scripts/package-appimage.sh; then
-            echo "::error title=Release stage failed::stage=package"
-            exit 1
-          fi
-
-      - name: Verify stage (artifact checks)
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          if ! APPIMAGE_VERSION="${{ steps.version.outputs.version }}" ./packaging/appimage/scripts/verify-artifact.sh; then
-            echo "::error title=Release stage failed::stage=verify"
-            exit 1
-          fi
-
-      - name: Build release metadata
-        id: metadata
-        shell: bash
-        run: |
-          set -euo pipefail
-
+          version="${GITHUB_REF_NAME}"
           out_dir="packaging/out/appimage"
-          artifact_name="${{ steps.version.outputs.artifact }}"
-          artifact_path="${out_dir}/${artifact_name}"
-          sha_file="${out_dir}/${artifact_name}.sha256"
-          metadata_file="${out_dir}/release-metadata-${{ steps.version.outputs.version }}.json"
+          artifact="tty-clock-timer-${version}-linux-x86_64.AppImage"
+          (cd "${out_dir}" && sha256sum "${artifact}" > "${artifact}.sha256")
+          sha_value="$(cut -d ' ' -f1 "${out_dir}/${artifact}.sha256")"
+          printf '{\n  "tag": "%s",\n  "version": "%s",\n  "platform": "linux-x86_64",\n  "artifact": "%s",\n  "artifact_sha256": "%s"\n}\n' \
+            "${version}" "${version}" "${artifact}" "${sha_value}" \
+            > "${out_dir}/release-metadata-${version}.json"
 
-          sha256sum "${artifact_path}" > "${sha_file}"
-          sha_value="$(cut -d ' ' -f1 "${sha_file}")"
+      - name: Upload verified Linux release assets
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-linux
+          path: |
+            packaging/out/appimage/*.AppImage
+            packaging/out/appimage/*.AppImage.sha256
+            packaging/out/appimage/release-metadata-*.json
+          if-no-files-found: error
 
-          cat > "${metadata_file}" <<EOF
-          {
-            "tag": "${{ steps.version.outputs.tag }}",
-            "version": "${{ steps.version.outputs.version }}",
-            "platform": "linux-x86_64",
-            "artifact": "${artifact_name}",
-            "artifact_sha256": "${sha_value}"
-          }
-          EOF
+  build-macos:
+    runs-on: macos-15
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
 
-          {
-            echo "artifact_path=${artifact_path}"
-            echo "sha_file=${sha_file}"
-            echo "metadata_file=${metadata_file}"
-          } >> "${GITHUB_OUTPUT}"
-
-      - name: Validate release credentials
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Verify Apple Silicon runner
         shell: bash
         run: |
           set -euo pipefail
+          test "$(uname -s)" = "Darwin"
+          test "$(uname -m)" = "arm64"
 
-          if [[ -z "${GH_TOKEN:-}" ]]; then
-            echo "::error title=Release stage failed::stage=upload (missing GITHUB_TOKEN)"
-            exit 1
-          fi
+      - name: Setup Zig
+        uses: mlugg/setup-zig@v2
+        with:
+          version: master
 
-          if ! gh api "repos/${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
-            echo "::error title=Release stage failed::stage=upload (token cannot access repository API)"
-            echo "Ensure repository Actions workflow permissions are set to Read and write."
-            exit 1
-          fi
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
 
-      - name: Upload stage (GitHub Release assets)
+      - name: Install locked TUI dependencies
+        working-directory: tui
+        run: bun install --frozen-lockfile
+
+      - name: Run macOS core tests
+        working-directory: core
+        run: zig build test
+
+      - name: Run macOS TUI tests
+        working-directory: tui
+        run: bun test --preload @opentui/solid/preload
+
+      - name: Package macOS arm64 archive
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          MACOS_VERSION: ${{ github.ref_name }}
+        run: ./packaging/macos/scripts/package-macos.sh
+
+      - name: Verify macOS package and runtime
+        env:
+          MACOS_VERSION: ${{ github.ref_name }}
+        run: ./packaging/macos/scripts/verify-artifact.sh
+
+      - name: Upload verified macOS release assets
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-macos
+          path: |
+            packaging/out/macos/*.tar.gz
+            packaging/out/macos/*.tar.gz.sha256
+          if-no-files-found: error
+
+  publish:
+    needs: [build-linux, build-macos]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - name: Download verified platform assets
+        uses: actions/download-artifact@v8
+        with:
+          pattern: release-*
+          merge-multiple: true
+          path: release-assets
+
+      - name: Validate complete release asset set
         shell: bash
         run: |
           set -euo pipefail
+          version="${GITHUB_REF_NAME}"
+          test -f "release-assets/tty-clock-timer-${version}-linux-x86_64.AppImage"
+          test -f "release-assets/tty-clock-timer-${version}-linux-x86_64.AppImage.sha256"
+          test -f "release-assets/release-metadata-${version}.json"
+          test -f "release-assets/tty-clock-timer-${version}-macos-arm64.tar.gz"
+          test -f "release-assets/tty-clock-timer-${version}-macos-arm64.tar.gz.sha256"
 
-          tag="${{ steps.version.outputs.tag }}"
-          title="tty-clock-timer ${tag}"
-          notes_file="packaging/out/appimage/release-notes-${{ steps.version.outputs.version }}.md"
-
+      - name: Publish one cross-platform GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME}"
+          notes_file="release-notes.md"
           cat > "${notes_file}" <<EOF
-          Version: ${{ steps.version.outputs.version }}
-          Platform: linux-x86_64
-          Artifact: ${{ steps.version.outputs.artifact }}
+          Version: ${tag}
 
-          Assets:
-          - ${{ steps.version.outputs.artifact }}
-          - ${{ steps.version.outputs.artifact }}.sha256
-          - release-metadata-${{ steps.version.outputs.version }}.json
+          Platforms:
+          - Linux x86_64 AppImage
+          - macOS Apple Silicon (arm64) tarball; requires Bun
+
+          The macOS artifact is not codesigned or notarized. Verify the SHA-256 checksum before use.
           EOF
 
           if ! gh release view "${tag}" >/dev/null 2>&1; then
-            if ! gh release create "${tag}" --title "${title}" --notes-file "${notes_file}"; then
-              echo "::error title=Release stage failed::stage=upload"
-              exit 1
-            fi
+            gh release create "${tag}" --title "tty-clock-timer ${tag}" --notes-file "${notes_file}"
           fi
-
-          if ! gh release upload "${tag}" \
-            "${{ steps.metadata.outputs.artifact_path }}" \
-            "${{ steps.metadata.outputs.sha_file }}" \
-            "${{ steps.metadata.outputs.metadata_file }}" \
-            --clobber; then
-            echo "::error title=Release stage failed::stage=upload"
-            exit 1
-          fi
+          gh release upload "${tag}" release-assets/* --clobber

@@ -16,7 +16,8 @@ const MAX_UI_CWD_CANDIDATES: usize = 5;
 const MAX_PROMPT_HELPER_CANDIDATES: usize = 6;
 const DEFAULT_UI_ENTRY = "src/index.tsx";
 const PROMPT_HELPER_ENTRY_ENV = "TTY_CLOCK_PROMPT_HELPER_ENTRY";
-const SOCKET_PATH_FORMAT = "/tmp/tty-clock-timer-{x:0>2}{x:0>2}{x:0>2}{x:0>2}{x:0>2}{x:0>2}{x:0>2}{x:0>2}.sock";
+const SOCKET_FILE_FORMAT = "tty-clock-timer-{x:0>2}{x:0>2}{x:0>2}{x:0>2}{x:0>2}{x:0>2}{x:0>2}{x:0>2}.sock";
+const SOUND_PLAYER_CANDIDATES = [_][]const u8{ "afplay", "paplay", "pw-play", "aplay", "mpg123", "ffplay" };
 
 const PromptSelection = union(enum) {
     chosen: u32,
@@ -511,15 +512,13 @@ fn runSetupSound(
     stdout_writer: *Io.Writer,
     environ_map: *const std.process.Environ.Map,
 ) !void {
-    const candidate_names = [_][]const u8{ "paplay", "pw-play", "aplay", "mpg123", "ffplay" };
-
     var detected_players: std.ArrayList([]const u8) = .empty;
     defer {
         for (detected_players.items) |player| allocator.free(player);
         detected_players.deinit(allocator);
     }
 
-    for (candidate_names) |candidate| {
+    for (SOUND_PLAYER_CANDIDATES) |candidate| {
         const maybe_path = try detectPlayerPath(allocator, io, candidate);
         if (maybe_path) |path| {
             try detected_players.append(allocator, path);
@@ -870,9 +869,15 @@ const RawModeContext = struct {
 };
 
 /// Configures stdin raw mode for single-key control and returns restore context.
-fn setupRawMode(stderr_writer: *Io.Writer) !RawModeContext {
+fn setupRawMode(io: Io, stderr_writer: *Io.Writer) !RawModeContext {
     var original_termios: ?std.posix.termios = null;
     const stdin_handle = Io.File.stdin().handle;
+    if (!(Io.File.stdin().isTty(io) catch false)) {
+        return .{
+            .original_termios = null,
+            .stdin_is_tty = false,
+        };
+    }
     const stdin_termios = std.posix.tcgetattr(stdin_handle) catch |err| switch (err) {
         error.NotATerminal => null,
         else => {
@@ -1003,13 +1008,38 @@ const SocketServerContext = struct {
     socket_path: []u8,
 };
 
-/// Generates a random per-run Unix socket path for IPC.
-fn generateSocketPath(allocator: std.mem.Allocator, io: Io) ![]u8 {
+const SocketTempDirCandidates = struct {
+    items: [2][]const u8 = undefined,
+    len: usize = 0,
+
+    fn append(self: *SocketTempDirCandidates, candidate: []const u8) void {
+        if (candidate.len == 0) return;
+        for (self.items[0..self.len]) |existing| {
+            if (std.mem.eql(u8, existing, candidate)) return;
+        }
+        self.items[self.len] = candidate;
+        self.len += 1;
+    }
+
+    fn asSlice(self: *const SocketTempDirCandidates) []const []const u8 {
+        return self.items[0..self.len];
+    }
+};
+
+fn collectSocketTempDirCandidates(environ_map: *const std.process.Environ.Map) SocketTempDirCandidates {
+    var candidates = SocketTempDirCandidates{};
+    if (environ_map.get("TMPDIR")) |tmpdir| candidates.append(tmpdir);
+    candidates.append("/tmp");
+    return candidates;
+}
+
+/// Generates a random per-run Unix socket path below one temp directory.
+fn generateSocketPathInDir(allocator: std.mem.Allocator, io: Io, temp_dir: []const u8) ![]u8 {
     var random_bytes: [8]u8 = undefined;
     io.random(&random_bytes);
-    return std.fmt.allocPrint(
+    const file_name = try std.fmt.allocPrint(
         allocator,
-        SOCKET_PATH_FORMAT,
+        SOCKET_FILE_FORMAT,
         .{
             random_bytes[0],
             random_bytes[1],
@@ -1021,48 +1051,73 @@ fn generateSocketPath(allocator: std.mem.Allocator, io: Io) ![]u8 {
             random_bytes[7],
         },
     );
+    defer allocator.free(file_name);
+    return std.fs.path.join(allocator, &.{ temp_dir, file_name });
+}
+
+/// Selects the first temp directory that yields a valid Unix socket address.
+fn generateSocketPath(
+    allocator: std.mem.Allocator,
+    io: Io,
+    environ_map: *const std.process.Environ.Map,
+) ![]u8 {
+    const candidates = collectSocketTempDirCandidates(environ_map);
+    for (candidates.asSlice()) |temp_dir| {
+        const path = try generateSocketPathInDir(allocator, io, temp_dir);
+        if (std.Io.net.UnixAddress.init(path)) |_| {
+            return path;
+        } else |_| {
+            allocator.free(path);
+        }
+    }
+    return error.NameTooLong;
 }
 
 /// Creates and binds the Unix socket server with retry handling.
-fn setupSocket(allocator: std.mem.Allocator, io: Io, stderr_writer: *Io.Writer) !SocketServerContext {
-    var attempts: u8 = 0;
-    while (attempts < SOCKET_BIND_RETRY_LIMIT) : (attempts += 1) {
-        const socket_path = try generateSocketPath(allocator, io);
-        errdefer allocator.free(socket_path);
+fn setupSocket(
+    allocator: std.mem.Allocator,
+    io: Io,
+    stderr_writer: *Io.Writer,
+    environ_map: *const std.process.Environ.Map,
+) !SocketServerContext {
+    const candidates = collectSocketTempDirCandidates(environ_map);
+    for (candidates.asSlice()) |temp_dir| {
+        var attempts: u8 = 0;
+        while (attempts < SOCKET_BIND_RETRY_LIMIT) : (attempts += 1) {
+            const socket_path = try generateSocketPathInDir(allocator, io, temp_dir);
 
-        clearSocketPath(io, socket_path) catch |err| {
-            try stderr_writer.print("Error: Failed to clear stale socket ({s})\n", .{@errorName(err)});
-            try stderr_writer.flush();
-            std.process.exit(1);
-        };
+            const socket_address = std.Io.net.UnixAddress.init(socket_path) catch {
+                allocator.free(socket_path);
+                break;
+            };
 
-        const socket_address = std.Io.net.UnixAddress.init(socket_path) catch |err| {
-            try stderr_writer.print("Error: Invalid socket path ({s})\n", .{@errorName(err)});
-            try stderr_writer.flush();
-            std.process.exit(1);
-        };
+            clearSocketPath(io, socket_path) catch {
+                allocator.free(socket_path);
+                break;
+            };
 
-        const server = std.Io.net.UnixAddress.listen(&socket_address, io, .{}) catch |err| switch (err) {
-            error.AddressInUse => {
-                clearSocketPath(io, socket_path) catch {};
-                continue;
-            },
-            else => {
-                try stderr_writer.print("Error: Failed to listen on unix socket ({s})\n", .{@errorName(err)});
-                try stderr_writer.flush();
-                std.process.exit(1);
-            },
-        };
+            const server = std.Io.net.UnixAddress.listen(&socket_address, io, .{}) catch |err| switch (err) {
+                error.AddressInUse => {
+                    clearSocketPath(io, socket_path) catch {};
+                    allocator.free(socket_path);
+                    continue;
+                },
+                else => {
+                    allocator.free(socket_path);
+                    break;
+                },
+            };
 
-        return SocketServerContext{
-            .server = server,
-            .socket_path = socket_path,
-        };
+            return SocketServerContext{
+                .server = server,
+                .socket_path = socket_path,
+            };
+        }
     }
 
     try stderr_writer.print(
-        "Error: Failed to allocate unique socket path after {d} attempts\n",
-        .{SOCKET_BIND_RETRY_LIMIT},
+        "Error: Failed to bind a Unix socket in TMPDIR or /tmp\n",
+        .{},
     );
     try stderr_writer.flush();
     std.process.exit(1);
@@ -1306,7 +1361,7 @@ pub fn main(init: std.process.Init) !void {
 
     // Step 4: Configure stdin into raw mode for timer runtime.
     // This lets us react to single-key input (`q`) without waiting for Enter.
-    const raw_mode = try setupRawMode(stderr_writer);
+    const raw_mode = try setupRawMode(io, stderr_writer);
     const stdin_is_tty = raw_mode.stdin_is_tty;
     defer if (raw_mode.original_termios) |saved| {
         std.posix.tcsetattr(Io.File.stdin().handle, .NOW, saved) catch |err| {
@@ -1386,7 +1441,7 @@ pub fn main(init: std.process.Init) !void {
 
     if (std.process.can_spawn and ui_runtime != null) {
         // Step 7: Prepare Unix socket server for TUI <-> core IPC bridge.
-        const server_ctx = try setupSocket(allocator, io, stderr_writer);
+        const server_ctx = try setupSocket(allocator, io, stderr_writer, init.environ_map);
         socket_server = server_ctx.server;
         socket_path = server_ctx.socket_path;
     }
@@ -1872,16 +1927,89 @@ test "main/resolveUiEntry - uses default and override" {
     try std.testing.expectEqualStrings("dist/index.mjs", resolveUiEntry(&environ_map));
 }
 
-test "main/generateSocketPath - returns unique IPC socket paths" {
+test "main/generateSocketPath - uses TMPDIR and returns unique IPC socket paths" {
     const allocator = std.testing.allocator;
     const io = std.testing.io;
+    var environ_map = std.process.Environ.Map.init(allocator);
+    defer environ_map.deinit();
+    try environ_map.put("TMPDIR", "/private/tmp/ttc-tests");
 
-    const first = try generateSocketPath(allocator, io);
+    const first = try generateSocketPath(allocator, io, &environ_map);
     defer allocator.free(first);
-    const second = try generateSocketPath(allocator, io);
+    const second = try generateSocketPath(allocator, io, &environ_map);
     defer allocator.free(second);
 
     try std.testing.expect(!std.mem.eql(u8, first, second));
-    try std.testing.expect(std.mem.startsWith(u8, first, "/tmp/tty-clock-timer-"));
+    try std.testing.expect(std.mem.startsWith(u8, first, "/private/tmp/ttc-tests/tty-clock-timer-"));
     try std.testing.expect(std.mem.endsWith(u8, first, ".sock"));
+}
+
+test "main/generateSocketPath - empty TMPDIR falls back to /tmp" {
+    const allocator = std.testing.allocator;
+    const io = std.testing.io;
+    var environ_map = std.process.Environ.Map.init(allocator);
+    defer environ_map.deinit();
+    try environ_map.put("TMPDIR", "");
+
+    const path = try generateSocketPath(allocator, io, &environ_map);
+    defer allocator.free(path);
+    try std.testing.expect(std.mem.startsWith(u8, path, "/tmp/tty-clock-timer-"));
+}
+
+test "main/generateSocketPath - overlong TMPDIR falls back to /tmp" {
+    const allocator = std.testing.allocator;
+    const io = std.testing.io;
+    var environ_map = std.process.Environ.Map.init(allocator);
+    defer environ_map.deinit();
+    const long_tmpdir = "/this/path/is/intentionally/too/long/for/a/portable/unix/domain/socket/address/and/must/fall/back/instead/of/failing";
+    try environ_map.put("TMPDIR", long_tmpdir);
+
+    const path = try generateSocketPath(allocator, io, &environ_map);
+    defer allocator.free(path);
+    try std.testing.expect(std.mem.startsWith(u8, path, "/tmp/tty-clock-timer-"));
+}
+
+test "main/clearSocketPath - removes an existing path and tolerates missing path" {
+    const io = std.testing.io;
+    const path = ".zig-test-stale-socket";
+    Dir.cwd().deleteFile(io, path) catch {};
+    var file = try Dir.cwd().createFile(io, path, .{});
+    file.close(io);
+
+    try clearSocketPath(io, path);
+    try clearSocketPath(io, path);
+    try std.testing.expectError(error.FileNotFound, Dir.cwd().openFile(io, path, .{}));
+}
+
+test "main/sound player candidates include macOS and Linux players" {
+    try std.testing.expectEqualStrings("afplay", SOUND_PLAYER_CANDIDATES[0]);
+    try std.testing.expectEqualStrings("paplay", SOUND_PLAYER_CANDIDATES[1]);
+    try std.testing.expectEqualStrings("aplay", SOUND_PLAYER_CANDIDATES[3]);
+}
+
+test "main/runSetupSoundPrompt - accepts afplay selection" {
+    const allocator = std.testing.allocator;
+    const io = std.testing.io;
+    const helper_file = ".zig-test-prompt-helper-afplay.js";
+    defer Dir.cwd().deleteFile(io, helper_file) catch {};
+    try Dir.cwd().writeFile(io, .{
+        .sub_path = helper_file,
+        .data = "process.stdout.write('{\"status\":\"submitted\",\"player\":\"/usr/bin/afplay\",\"file\":\"/tmp/ding.aiff\"}\\n');\n",
+    });
+
+    var environ_map = std.process.Environ.Map.init(allocator);
+    defer environ_map.deinit();
+    try environ_map.put(PROMPT_HELPER_ENTRY_ENV, helper_file);
+
+    const players = [_][]const u8{ "/usr/bin/afplay", "/usr/bin/paplay" };
+    const result = try runSetupSoundPrompt(allocator, io, &environ_map, players[0..]);
+    switch (result) {
+        .chosen => |value| {
+            defer allocator.free(value.player);
+            defer allocator.free(value.file);
+            try std.testing.expectEqualStrings("/usr/bin/afplay", value.player);
+            try std.testing.expectEqualStrings("/tmp/ding.aiff", value.file);
+        },
+        else => try std.testing.expect(false),
+    }
 }

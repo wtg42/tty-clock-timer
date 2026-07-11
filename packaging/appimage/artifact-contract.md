@@ -1,6 +1,6 @@
 # Core-TUI Artifact Contract
 
-此文件定義 AppImage / 開發模式共用的 core-to-TUI runtime contract。
+此文件定義跨平台 core-to-TUI runtime contract，並保留 AppImage 的具體 layout。macOS 對應 layout 見 `packaging/macos/artifact-contract.md`。
 
 ## Artifact Inventory
 
@@ -10,7 +10,7 @@
 | TUI runtime root | Yes | `usr/lib/tty-clock-timer/tui` | 由 core 作為 `cwd` 啟動 |
 | TUI entry file | Yes | `index.js` | 可用 `TTY_CLOCK_TUI_ENTRY` 覆蓋 |
 | Prompt helper entry | Yes | `prompts/helper.js` | 供 core 執行 list / delete / setup-sound prompt flow |
-| TUI native library | Yes | `libopentui.so` | 與 JS bundle 共同存在於 runtime root |
+| TUI native library | Yes | `libopentui.so` | Linux 使用 `.so`；macOS runtime 對應使用 `libopentui.dylib` |
 | AppRun wrapper | Yes | `AppRun` | 只設置 contract env，最後執行 core |
 
 ## Runtime Path Resolution Order
@@ -63,3 +63,10 @@ bun run <entry> -- --socket-path <unique-socket-path>
 - AppRun 只做環境變數設定與轉呼叫 core
 - UI 啟動責任保持在 core
 - 不新增由 AppRun 或其他外部腳本直接啟動 UI 的平行路徑
+
+## macOS Boundary
+
+- macOS `bin/ttc` launcher 只解析自身 archive root、檢查 Bun、設定 contract env 並 `exec` core
+- macOS native library 是 `libopentui.dylib`，且必須搭配 `@opentui/core-darwin-arm64` shim
+- launcher 不得直接啟動 UI，TUI lifecycle 仍完全由 Zig core 管理
+- macOS archive 可整體搬移，但不能只抽離 launcher 或 core binary

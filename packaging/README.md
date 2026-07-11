@@ -1,6 +1,6 @@
 # Packaging
 
-This directory contains packaging and release assets for `tty-clock-timer`. The current distribution target is **AppImage** (Linux x86_64).
+This directory contains packaging and release assets for `tty-clock-timer`: **AppImage** for Linux x86_64 and a versioned **tarball** for macOS Apple Silicon.
 
 ## Directory Layout
 
@@ -15,9 +15,11 @@ packaging/
 │   ├── verification.md
 │   ├── assets/          <- .desktop and icon files
 │   └── scripts/         <- build / package / verify scripts
+├── macos/               <- macOS arm64 contract, launcher, and scripts
 ├── tools/               <- external tools (for example, appimagetool)
 └── out/                 <- build outputs (git-ignored)
-    └── appimage/        <- AppImage and intermediate artifacts
+    ├── appimage/        <- AppImage and intermediate artifacts
+    └── macos/           <- macOS tarball and intermediate artifacts
 ```
 
 ## Environment Requirements
@@ -27,6 +29,8 @@ packaging/
 | `zig` | 0.16+ | Builds the core binary |
 | `bun` | 1.x | Required on host (used to install/build TUI bundle during packaging) |
 | `appimagetool` | - | Packages AppDir into `.AppImage` (auto-discovered or auto-downloaded by scripts) |
+
+macOS packaging additionally requires a native Apple Silicon host (`Darwin arm64`). Its release artifact still requires Bun at runtime; Bun is not embedded.
 
 You can download `appimagetool` from [GitHub Releases](https://github.com/AppImage/appimagetool/releases).
 
@@ -47,6 +51,16 @@ Optional (for isolated core build debugging):
 ```
 
 Output path: `packaging/out/appimage/tty-clock-timer-<version>-linux-x86_64.AppImage`
+
+For macOS Apple Silicon:
+
+```bash
+MACOS_VERSION=0.1.0 ./packaging/macos/scripts/package-macos.sh
+MACOS_VERSION=0.1.0 ./packaging/macos/scripts/verify-artifact.sh
+MACOS_VERSION=0.1.0 ./packaging/macos/scripts/test-failures.sh
+```
+
+Output path: `packaging/out/macos/tty-clock-timer-<version>-macos-arm64.tar.gz`
 
 ## FAQ
 
@@ -99,3 +113,5 @@ Yes. `packaging/out/` contains build artifacts and can be safely removed and reb
 - [Artifact Contract](appimage/artifact-contract.md)
 - [Packaging checklist](appimage/checklist.md)
 - [Verification record](appimage/verification.md)
+- [macOS packaging guide](macos/README.md)
+- [macOS artifact contract](macos/artifact-contract.md)
