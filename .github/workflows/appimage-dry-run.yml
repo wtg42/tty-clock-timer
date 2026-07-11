@@ -90,7 +90,7 @@ jobs:
           sha256sum "${artifact}" > "${artifact}.sha256"
 
       - name: Upload dry-run artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: appimage-dry-run-${{ github.run_number }}
           path: |
