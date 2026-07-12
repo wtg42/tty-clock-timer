@@ -2,9 +2,7 @@
 
 ## Purpose
 定義音效設定 CLI 流程，確保 `--setup-sound` 透過 prompt helper 完成互動並維持可驗證的設定寫入語意。
-
 ## Requirements
-
 ### Requirement: --setup-sound 必須透過 prompt helper 完成互動
 系統 MUST 使用 Bun 啟動的 prompt helper 執行 `--setup-sound` 的播放器選擇與檔案輸入流程，且 MUST NOT 回退到 `gum` binary 或其他純文字互動路徑。
 
@@ -22,7 +20,11 @@
 
 #### Scenario: 偵測到系統播放器
 - **WHEN** 進入 `--setup-sound` 模式
-- **THEN** 系統 MUST 自動偵測系統中存在的常見播放器（paplay、pw-play、aplay、mpg123、ffplay），並透過 prompt helper 列出供選擇
+- **THEN** 系統 MUST 自動偵測系統中存在的常見播放器（afplay、paplay、pw-play、aplay、mpg123、ffplay），並透過 prompt helper 列出供選擇
+
+#### Scenario: macOS 偵測內建播放器
+- **WHEN** macOS 系統可從 `PATH` 解析內建 `afplay`
+- **THEN** 系統 MUST 將 `afplay` 的完整路徑列為可選播放器
 
 #### Scenario: 系統無任何播放器
 - **WHEN** 進入 `--setup-sound` 模式但偵測不到任何播放器
