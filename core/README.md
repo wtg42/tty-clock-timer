@@ -15,9 +15,9 @@
 - Timer duration history is persisted to XDG state path (`$XDG_STATE_HOME` fallback to `$HOME/.local/state`), with dedup + recency ordering + max 10 entries.
 - `list` uses the bundled prompt helper (`tui/dist/prompts/helper.js`) to select history durations.
 - `list --delete` uses the bundled prompt helper for multi-select delete and prints remaining entries (or `no history`).
-- `--setup-sound` supports player detection (`paplay`/`pw-play`/`aplay`/`mpg123`/`ffplay`), writes config to XDG config path, and exits without starting timer/TUI.
+- `--setup-sound` supports player detection (`afplay`/`paplay`/`pw-play`/`aplay`/`mpg123`/`ffplay`), writes config to XDG config path, and exits without starting timer/TUI.
 - Prompt flows are exchanged with the helper over JSON stdout payloads.
-- When UI startup is available, each run uses a unique socket: `/tmp/tty-clock-timer-*.sock`.
+- When UI startup is available, each run uses a unique socket. Core prefers a usable, length-safe `TMPDIR` path and falls back to `/tmp/tty-clock-timer-*.sock` when needed.
 - UI runtime path resolution follows the contract: `TTY_CLOCK_TUI_CWD` -> `APPDIR` -> local fallback.
 - If no UI connects, CLI fallback still supports quitting with stdin `q`.
 - Core emits events: `init`, `update_timer`, `timer_finished`, `exit`.
